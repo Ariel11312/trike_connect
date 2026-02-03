@@ -21,6 +21,8 @@ const userSchema = new mongoose.Schema({
   // Driver-specific
   todaName: { type: String, trim: true },
   licensePlate: { type: String, trim: true },
+  driversLicense: { type: String, trim: true },
+  sapiId: { type: String, trim: true },
   idCardImage: { type: String, trim: true }, // Stores the filename of the ID image (e.g., "id_1234567890_user_email_com.jpg")
   address: { type: String, trim: true }, // Extracted from OCR
 

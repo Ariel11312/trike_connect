@@ -38,6 +38,7 @@ interface Driver {
   id: string;
   firstname: string;
   lastname: string;
+todaName: string;
 }
 
 interface LocationWithHeading {
@@ -188,6 +189,7 @@ export default function DriverHome() {
             id: data.user.id,
             firstname: data.user.firstName,
             lastname: data.user.lastName,
+             todaName: data.user.todaName, 
           });
         }
       })
@@ -207,6 +209,82 @@ export default function DriverHome() {
   useEffect(() => {
     isNavigating.current = !!(activeRide && ridePhase);
   }, [activeRide, ridePhase]);
+
+  // Poll for ride status updates to detect cancellations
+  useEffect(() => {
+    if (!activeRide) return;
+
+    const checkRideStatus = async () => {
+      try {
+        const res = await fetch(`http://192.168.100.37:5000/api/rides/${activeRide._id}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const data = await res.json();
+
+        if (data.success && data.ride) {
+          const rideStatus = data.ride.status;
+          
+          console.log('📊 Ride status check:', {
+            rideId: data.ride._id,
+            status: rideStatus,
+            previousStatus: activeRide.status,
+          });
+          
+          if (rideStatus === 'cancelled') {
+            console.log('❌ Ride was cancelled');
+            
+            // Clear active ride state
+            setActiveRide(null);
+            setRidePhase(null);
+            setRouteCoordinates([]);
+            setShowRidesList(true);
+            
+            // Reset map camera
+            if (currentLocation && mapRef.current) {
+              const camera: Partial<Camera> = {
+                center: {
+                  latitude: currentLocation.latitude,
+                  longitude: currentLocation.longitude,
+                },
+                zoom: 15,
+                heading: 0,
+                pitch: 0,
+              };
+              mapRef.current.animateCamera(camera, { duration: 1000 });
+            }
+            
+            // Show alert
+            Alert.alert(
+              '❌ Ride Cancelled',
+              data.ride.cancelledReason || 'The ride has been cancelled by the passenger.',
+              [{ 
+                text: 'OK',
+                onPress: () => {
+                  // Refresh pending rides list
+                  fetchPendingRides();
+                }
+              }]
+            );
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error checking ride status:', error);
+      }
+    };
+
+    // Poll every 3 seconds
+    const interval = setInterval(checkRideStatus, 3000);
+    
+    // Run immediately on mount
+    checkRideStatus();
+    
+    return () => clearInterval(interval);
+  }, [activeRide]);
 
   const startLocationTracking = async () => {
     try {
@@ -351,25 +429,30 @@ export default function DriverHome() {
   };
 
   // Fetch pending rides
-  const fetchPendingRides = async () => {
-    try {
-      const res = await fetch('http://192.168.100.37:5000/api/rides?status=pending', {
+const fetchPendingRides = async () => {
+  if (!driver?.todaName) return;
+
+  try {
+    const res = await fetch(
+      `http://192.168.100.37:5000/api/rides?status=pending&todaName=${encodeURIComponent(driver.todaName)}`,
+      {
         method: 'GET',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        setPendingRides(data.rides);
       }
-    } catch (error) {
-      console.error('Error fetching rides:', error);
+    );
+
+    const data = await res.json();
+
+    if (data.success) {
+      setPendingRides(data.rides);
     }
-  };
+  } catch (error) {
+    console.error('Error fetching rides:', error);
+  }
+};
 
   // Fetch completed rides history
   const fetchCompletedRides = async () => {
@@ -392,11 +475,19 @@ export default function DriverHome() {
     }
   };
 
-  useEffect(() => {
+useEffect(() => {
+  console.log('Component mounted, starting interval');
+  fetchPendingRides();
+  
+  const interval = setInterval(() => {
     fetchPendingRides();
-    const interval = setInterval(fetchPendingRides, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  }, 5000);
+  
+  return () => {
+    console.log('Component unmounting, clearing interval');
+    clearInterval(interval);
+  };
+}, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -528,8 +619,17 @@ export default function DriverHome() {
   };
 
   const handleAcceptRide = async (ride: Ride) => {
+    if (!driver) {
+      Alert.alert("Error", "Driver information not loaded");
+      return;
+    }
+
     try {
-      const res = await fetch(`http://192.168.100.37:5000/api/rides/${ride._id}/status`, {
+      console.log('🎯 Accepting ride:', ride._id);
+      console.log('👤 Driver ID:', driver.id);
+      
+      // First, update the ride status to accepted
+      const statusRes = await fetch(`http://192.168.100.37:5000/api/rides/${ride._id}/status`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -540,10 +640,26 @@ export default function DriverHome() {
         }),
       });
 
-      const data = await res.json();
+      const statusData = await statusRes.json();
+      console.log('Status update response:', statusData);
 
-      if (data.success) {
-        console.log('🎯 Ride accepted');
+      // Then, assign the driver to the ride
+      const driverRes = await fetch(`http://192.168.100.37:5000/api/rides/${ride._id}/driver`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          driver: driver.id,
+        }),
+      });
+
+      const driverData = await driverRes.json();
+      console.log('Driver assignment response:', driverData);
+      
+      if ((statusData.success || statusRes.ok) && (driverData.success || driverRes.ok)) {
+        console.log('✅ Ride accepted and driver assigned successfully');
         setActiveRide(ride);
         setRidePhase("to-pickup");
         setShowRidesList(false);
@@ -562,9 +678,14 @@ export default function DriverHome() {
         }
 
         Alert.alert("Ride Accepted", "Navigate to pickup location");
+      } else {
+        console.error('❌ Failed to accept ride');
+        console.error('Status response:', statusData);
+        console.error('Driver response:', driverData);
+        Alert.alert("Error", "Failed to accept ride");
       }
     } catch (error) {
-      console.error('Error accepting ride:', error);
+      console.error('❌ Error accepting ride:', error);
       Alert.alert("Error", "Failed to accept ride");
     }
   };

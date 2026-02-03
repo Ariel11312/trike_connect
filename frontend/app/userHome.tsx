@@ -10,12 +10,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  Linking,
 } from "react-native";
 import { useState, useEffect } from "react";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
 import { Stack, router } from "expo-router";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Picker } from '@react-native-picker/picker';
 
 interface LocationData {
   name: string;
@@ -27,6 +29,15 @@ interface User {
   id: string;
   firstname: string;
   lastname: string;
+}
+
+interface Driver {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  todaName: string;
+  licensePlate: string;
 }
 
 // Storage keys
@@ -45,6 +56,7 @@ interface BookingData {
   distance: number;
   fare: number;
   routeCoordinates: { latitude: number; longitude: number }[];
+  selectedTodaName: string;
 }
 
 interface RideHistory {
@@ -56,6 +68,18 @@ interface RideHistory {
   date: string;
   timestamp: number;
 }
+
+// Report reasons
+const REPORT_REASONS = [
+  "Rude or unprofessional behavior",
+  "Unsafe driving",
+  "Vehicle condition issues",
+  "Wrong route taken",
+  "Driver asked for extra payment",
+  "Driver cancelled without reason",
+  "Late arrival",
+  "Other",
+];
 
 export default function UserHome() {
   const [showBookingForm, setShowBookingForm] = useState(false);
@@ -72,6 +96,15 @@ export default function UserHome() {
   const [isRestoringState, setIsRestoringState] = useState(true);
   const [rideHistory, setRideHistory] = useState<RideHistory[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedTodaName, setSelectedTodaName] = useState("");
+  const [todaNames, setTodaNames] = useState<string[]>([]);
+  const [assignedDriver, setAssignedDriver] = useState<Driver | null>(null);
+
+  // Report Driver states
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [selectedReportReason, setSelectedReportReason] = useState("");
+  const [reportComment, setReportComment] = useState("");
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
   // Location states
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
@@ -112,6 +145,33 @@ export default function UserHome() {
 
   const FARE_PER_KM = 20;
 
+  // Fetch available TODA names on mount
+  useEffect(() => {
+    fetchTodaNames();
+  }, []);
+
+  const fetchTodaNames = async () => {
+    try {
+      const res = await fetch('http://192.168.100.37:5000/api/rides/toda-names', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json();
+      if (data.success && data.todaNames) {
+        setTodaNames(data.todaNames);
+        console.log('✅ Loaded TODA names:', data.todaNames);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching TODA names:', error);
+      // Fallback TODA names
+      setTodaNames(['TODA 1', 'TODA 2', 'TODA 3', 'TODA 4', 'TODA 5']);
+    }
+  };
+
   // Restore persisted state on app launch
   useEffect(() => {
     restorePersistedState();
@@ -131,6 +191,7 @@ export default function UserHome() {
       if (savedRide && savedWaiting === 'true') {
         const ride = JSON.parse(savedRide);
         console.log('✅ Restored current ride:', ride._id);
+        console.log('📋 Full ride object:', JSON.stringify(ride, null, 2));
         
         setCurrentRide(ride);
         setIsWaitingForDriver(true);
@@ -147,6 +208,7 @@ export default function UserHome() {
           setDistance(bookingData.distance);
           setFare(bookingData.fare);
           setRouteCoordinates(bookingData.routeCoordinates);
+          setSelectedTodaName(bookingData.selectedTodaName || "");
 
           // Update map to show the route
           if (bookingData.currentLocation && bookingData.dropoffMarker) {
@@ -154,8 +216,18 @@ export default function UserHome() {
           }
         }
         
-        // Non-blocking notification - user can see the waiting card
-        console.log('🔄 Ride restored - still waiting for driver acceptance');
+        // Check for driver ID in multiple possible locations
+        const driverId = ride.driver || ride.driverId || ride.acceptedBy;
+        
+        // Fetch driver info if ride has been accepted
+        if (driverId) {
+          console.log('🚗 Ride has driver, fetching info for:', driverId);
+          fetchDriverInfo(driverId);
+        } else {
+          console.log('ℹ️ No driver assigned yet, status:', ride.status);
+        }
+        
+        console.log('🔄 Ride restored - checking status...');
       } else {
         console.log('ℹ️ No persisted ride state found');
       }
@@ -166,12 +238,57 @@ export default function UserHome() {
     }
   };
 
+  const fetchDriverInfo = async (driverIdOrObject: any) => {
+    try {
+      // Check if driver is already a populated object
+      if (typeof driverIdOrObject === 'object' && driverIdOrObject !== null) {
+        console.log('✅ Driver is already populated object:', driverIdOrObject);
+        const driverData = {
+          _id: driverIdOrObject._id || driverIdOrObject.id,
+          firstName: driverIdOrObject.firstName,
+          lastName: driverIdOrObject.lastName,
+          phoneNumber: driverIdOrObject.phoneNumber,
+          todaName: driverIdOrObject.todaName || '',
+          licensePlate: driverIdOrObject.licensePlate || '',
+        };
+        setAssignedDriver(driverData);
+        console.log('✅ Set driver info from object:', driverData.firstName, driverData.lastName);
+        return;
+      }
+
+      // If it's just an ID string, fetch from API
+      console.log('🔄 Fetching driver info for ID:', driverIdOrObject);
+      const res = await fetch(`http://192.168.100.37:5000/api/auth/user/${driverIdOrObject}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json();
+      if (data.success && data.user) {
+        const driverData = {
+          _id: data.user._id || data.user.id,
+          firstName: data.user.firstName,
+          lastName: data.user.lastName,
+          phoneNumber: data.user.phoneNumber,
+          todaName: data.user.todaName || '',
+          licensePlate: data.user.licensePlate || '',
+        };
+        setAssignedDriver(driverData);
+        console.log('✅ Loaded driver info from API:', data.user.firstName, data.user.lastName);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching driver info:', error);
+    }
+  };
+
   const loadRideHistory = async () => {
     try {
       const historyData = await AsyncStorage.getItem(STORAGE_KEYS.RIDE_HISTORY);
       if (historyData) {
         const history: RideHistory[] = JSON.parse(historyData);
-        // Sort by timestamp (newest first)
         history.sort((a, b) => b.timestamp - a.timestamp);
         setRideHistory(history);
         console.log('✅ Loaded ride history:', history.length, 'rides');
@@ -194,7 +311,6 @@ export default function UserHome() {
       };
 
       const updatedHistory = [newEntry, ...rideHistory];
-      // Keep only last 50 rides
       const trimmedHistory = updatedHistory.slice(0, 50);
       
       await AsyncStorage.setItem(STORAGE_KEYS.RIDE_HISTORY, JSON.stringify(trimmedHistory));
@@ -221,7 +337,6 @@ export default function UserHome() {
       } else if (date.toDateString() === yesterday.toDateString()) {
         dateKey = 'Yesterday';
       } else {
-        // Format: Month Day, Year
         dateKey = date.toLocaleDateString('en-US', { 
           month: 'long', 
           day: 'numeric', 
@@ -276,6 +391,7 @@ export default function UserHome() {
             distance,
             fare,
             routeCoordinates,
+            selectedTodaName,
           };
 
           await Promise.all([
@@ -299,7 +415,7 @@ export default function UserHome() {
     };
 
     persistState();
-  }, [currentRide, isWaitingForDriver, pickupLocation, dropoffLocation, distance, fare, isRestoringState]);
+  }, [currentRide, isWaitingForDriver, pickupLocation, dropoffLocation, distance, fare, selectedTodaName, isRestoringState]);
 
   useEffect(() => {
     fetch('http://192.168.100.37:5000/api/auth/me', {
@@ -325,7 +441,6 @@ export default function UserHome() {
       .catch(error => console.error('Error fetching user:', error));
   }, []);
 
-  // Get current location on component mount
   useEffect(() => {
     if (!isRestoringState) {
       getCurrentLocation();
@@ -350,17 +465,57 @@ export default function UserHome() {
 
         if (data.success && data.ride) {
           const rideStatus = data.ride.status;
+          const previousStatus = currentRide.status;
+          
+          // Check for driver ID in multiple possible locations
+          const driverId = data.ride.driver || data.ride.driverId || data.ride.acceptedBy;
+          
+          console.log('📊 Ride status check:', {
+            rideId: data.ride._id,
+            status: rideStatus,
+            previousStatus,
+            hasDriver: !!driverId,
+            driverId: driverId,
+            currentAssignedDriver: !!assignedDriver,
+            fullRideObject: data.ride
+          });
+          
+          // Update current ride with latest data
+          setCurrentRide(data.ride);
+          
           if (rideStatus === 'accepted') {
+            // Check if this is a new acceptance (status changed from pending to accepted)
+            const isNewAcceptance = previousStatus !== 'accepted' && !assignedDriver;
+            
+            // Always fetch driver info if we don't have it yet and we have a driver ID
+            if (!assignedDriver && driverId) {
+              console.log('🚗 Fetching driver info for:', driverId);
+              await fetchDriverInfo(driverId);
+              
+              // Show alert only once when status changes to accepted
+              if (isNewAcceptance) {
+                Alert.alert(
+                  '🎉 Ride Accepted!',
+                  'A driver has accepted your ride. They will arrive shortly!',
+                  [{ text: 'OK' }]
+                );
+              }
+            } else if (!driverId) {
+              console.warn('⚠️ Ride is accepted but no driver ID found in response');
+            }
+          } else if (rideStatus === 'completed') {
             setIsWaitingForDriver(false);
             setCurrentRide(null);
+            setAssignedDriver(null);
             Alert.alert(
-              '🎉 Ride Accepted!',
-              'A driver has accepted your ride. They will arrive shortly!',
+              '✅ Ride Completed!',
+              'Your ride has been completed. Thank you for using our service!',
               [{ text: 'OK' }]
             );
           } else if (rideStatus === 'cancelled') {
             setIsWaitingForDriver(false);
             setCurrentRide(null);
+            setAssignedDriver(null);
             Alert.alert(
               '❌ Ride Cancelled',
               data.ride.cancelledReason || 'Your ride has been cancelled.',
@@ -373,14 +528,15 @@ export default function UserHome() {
       }
     };
 
-    // Check every 3 seconds
     const interval = setInterval(checkRideStatus, 3000);
-
+    
+    // Run immediately on mount to check current status
+    checkRideStatus();
+    
     return () => clearInterval(interval);
   }, [currentRide, isWaitingForDriver]);
 
   const getCurrentLocation = async () => {
-    // Skip if we already have a restored location
     if (currentLocation) {
       console.log('ℹ️ Using restored location');
       return;
@@ -452,7 +608,6 @@ export default function UserHome() {
     if (query.length === 0) {
       setSearchResults([]);
       setShowSearchResults(false);
-      // Clear the dropoff location when search is cleared
       setDropoffLocation("");
       setDropoffMarker(null);
       setDistance(0);
@@ -676,12 +831,18 @@ export default function UserHome() {
       setShowSearchResults(false);
       setRouteCoordinates([]);
       setShowBookingForm(false);
+      setSelectedTodaName("");
     }
   };
 
   const handleBookRide = async () => {
     if (!pickupLocation || !dropoffLocation) {
       showModal("error", "Please select a dropoff location by tapping on the map");
+      return;
+    }
+
+    if (!selectedTodaName) {
+      showModal("error", "Please select a TODA");
       return;
     }
 
@@ -723,13 +884,13 @@ export default function UserHome() {
           },
           distance,
           fare,
+          todaName: selectedTodaName,
         }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
-        // Save to history
         await saveToHistory(currentLocation, dropoffMarker, distance, fare);
         
         setCurrentRide(data.ride);
@@ -758,6 +919,7 @@ export default function UserHome() {
       if (res.ok) {
         setIsWaitingForDriver(false);
         setCurrentRide(null);
+        setAssignedDriver(null);
         setDropoffLocation("");
         setDropoffMarker(null);
         setDistance(0);
@@ -765,10 +927,80 @@ export default function UserHome() {
         setSearchQuery("");
         setShowSearchResults(false);
         setRouteCoordinates([]);
+        setSelectedTodaName("");
         Alert.alert('Ride Cancelled', 'Your ride has been cancelled successfully.');
       }
     } catch (error) {
       console.error('Error cancelling ride:', error);
+    }
+  };
+
+  const handleCallDriver = () => {
+    if (assignedDriver && assignedDriver.phoneNumber) {
+      const phoneNumber = assignedDriver.phoneNumber.replace(/[^0-9+]/g, '');
+      Linking.openURL(`tel:${phoneNumber}`);
+    }
+  };
+
+  // Report Driver Functions
+  const handleOpenReportModal = () => {
+    setShowReportModal(true);
+    setSelectedReportReason("");
+    setReportComment("");
+  };
+
+  const handleCloseReportModal = () => {
+    setShowReportModal(false);
+    setSelectedReportReason("");
+    setReportComment("");
+  };
+
+  const handleSubmitReport = async () => {
+    if (!selectedReportReason) {
+      Alert.alert("Missing Information", "Please select a reason for reporting.");
+      return;
+    }
+
+    if (!assignedDriver || !currentRide) {
+      Alert.alert("Error", "Driver information not available.");
+      return;
+    }
+
+    setIsSubmittingReport(true);
+
+    try {
+      const res = await fetch('http://192.168.100.37:5000/api/reports/driver', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rideId: currentRide._id,
+          driverId: assignedDriver._id,
+          reason: selectedReportReason,
+          comment: reportComment,
+          reportedBy: user?.id,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        Alert.alert(
+          "Report Submitted",
+          "Thank you for your feedback. We will review this report and take appropriate action.",
+          [{ text: "OK" }]
+        );
+        handleCloseReportModal();
+      } else {
+        Alert.alert("Error", data.message || "Failed to submit report. Please try again.");
+      }
+    } catch (error) {
+      console.error('Error submitting report:', error);
+      Alert.alert("Network Error", "Unable to submit report. Please check your connection.");
+    } finally {
+      setIsSubmittingReport(false);
     }
   };
 
@@ -784,7 +1016,6 @@ export default function UserHome() {
           showsUserLocation={true}
           showsMyLocationButton={true}
         >
-          {/* Current Location Marker */}
           {currentLocation && (
             <Marker
               coordinate={{
@@ -797,7 +1028,6 @@ export default function UserHome() {
             />
           )}
 
-          {/* Dropoff Location Marker */}
           {dropoffMarker && (
             <Marker
               coordinate={{
@@ -810,7 +1040,6 @@ export default function UserHome() {
             />
           )}
 
-          {/* Direction Line (Route) */}
           {routeCoordinates.length > 0 && (
             <>
               <Polyline
@@ -847,7 +1076,7 @@ export default function UserHome() {
           </View>
         )}
 
-        {/* Book Ride Button */}
+        {/* Book Ride Button / Driver Card / Waiting Card */}
         {!isWaitingForDriver ? (
           <View style={styles.buttonContainer}>
             <TouchableOpacity
@@ -863,15 +1092,68 @@ export default function UserHome() {
               <Text style={styles.bookRideButtonText}>📍 Book a Ride</Text>
             </TouchableOpacity>
           </View>
+        ) : currentRide?.status === 'accepted' && assignedDriver ? (
+          <View style={styles.driverCard}>
+            <View style={styles.driverCardHeader}>
+              <Text style={styles.driverCardIcon}>🚗</Text>
+              <Text style={styles.driverCardTitle}>Driver Assigned!</Text>
+            </View>
+
+            <View style={styles.driverInfoContainer}>
+              <View style={styles.driverInfo}>
+                <Text style={styles.driverName}>
+                  {assignedDriver.firstName} {assignedDriver.lastName}
+                </Text>
+
+                <Text style={styles.driverDetails}>
+                  🚕 {assignedDriver.todaName}
+                </Text>
+
+                <Text style={styles.driverDetails}>
+                  🚙 {assignedDriver.licensePlate}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.callButton}
+                onPress={handleCallDriver}
+              >
+                <Text style={styles.callIcon}>📞</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.driverSubtext}>
+              Your driver is on the way!
+            </Text>
+
+            {/* Action Buttons Row */}
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity
+                style={styles.reportButton}
+                onPress={handleOpenReportModal}
+              >
+                <Text style={styles.reportButtonText}>⚠️ Report Driver</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={handleCancelRide}
+              >
+                <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         ) : (
           <View style={styles.waitingCard}>
             <View style={styles.waitingHeader}>
               <Text style={styles.waitingIcon}>⏳</Text>
               <Text style={styles.waitingTitle}>Waiting for Driver</Text>
             </View>
+
             <Text style={styles.waitingSubtext}>
               Looking for available drivers nearby...
             </Text>
+
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={handleCancelRide}
@@ -902,7 +1184,7 @@ export default function UserHome() {
                 <View style={styles.handleBar} />
  
                 <ScrollView
-                 style={styles.bookaride}                
+                  style={styles.bookaride}                
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   contentContainerStyle={styles.scrollContent}
@@ -912,6 +1194,26 @@ export default function UserHome() {
                   <Text style={styles.instructionText}>
                     📍 Search for a location OR tap anywhere on the map
                   </Text>
+
+                  {/* TODA Selection */}
+                  <View style={styles.inputContainer}>
+                    <View style={styles.iconRow}>
+                      <Text style={styles.icon}>🚕</Text>
+                      <Text style={styles.label}>Select TODA</Text>
+                    </View>
+                    <View style={styles.pickerContainer}>
+                      <Picker
+                        selectedValue={selectedTodaName}
+                        onValueChange={(itemValue) => setSelectedTodaName(itemValue)}
+                        style={styles.picker}
+                      >
+                        <Picker.Item label="Choose a TODA..." value="" />
+                        {todaNames.map((toda, index) => (
+                          <Picker.Item key={index} label={toda} value={toda} />
+                        ))}
+                      </Picker>
+                    </View>
+                  </View>
 
                   {/* Pickup Location (Read-only) */}
                   <View style={styles.inputContainer}>
@@ -944,7 +1246,6 @@ export default function UserHome() {
                           setSearchQuery("");
                           setShowSearchResults(false);
                           setSearchResults([]);
-                          // Clear dropoff when user clears the input
                           setDropoffLocation("");
                           setDropoffMarker(null);
                           setDistance(0);
@@ -965,7 +1266,6 @@ export default function UserHome() {
                       }}
                     />
 
-                    {/* Search Results - Fixed positioning */}
                     {showSearchResults && searchResults.length > 0 && (
                       <View style={styles.searchResults}>
                         <ScrollView 
@@ -1041,6 +1341,96 @@ export default function UserHome() {
             </KeyboardAvoidingView>
           </View>
         )}
+
+        {/* Report Driver Modal */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={showReportModal}
+          onRequestClose={handleCloseReportModal}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.reportModalContent}>
+              <View style={styles.reportModalHeader}>
+                <Text style={styles.reportModalTitle}>Report Driver</Text>
+                <TouchableOpacity onPress={handleCloseReportModal}>
+                  <Text style={styles.closeButton}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.reportModalBody}>
+                {assignedDriver && (
+                  <View style={styles.reportDriverInfo}>
+                    <Text style={styles.reportDriverName}>
+                      {assignedDriver.firstName} {assignedDriver.lastName}
+                    </Text>
+                    <Text style={styles.reportDriverDetails}>
+                      {assignedDriver.todaName} • {assignedDriver.licensePlate}
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={styles.reportSectionLabel}>Reason for Report *</Text>
+                <View style={styles.reportReasonsContainer}>
+                  {REPORT_REASONS.map((reason, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.reportReasonChip,
+                        selectedReportReason === reason && styles.reportReasonChipSelected
+                      ]}
+                      onPress={() => setSelectedReportReason(reason)}
+                    >
+                      <Text style={[
+                        styles.reportReasonText,
+                        selectedReportReason === reason && styles.reportReasonTextSelected
+                      ]}>
+                        {reason}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.reportSectionLabel}>Additional Comments (Optional)</Text>
+                <TextInput
+                  style={styles.reportCommentInput}
+                  placeholder="Please provide more details..."
+                  value={reportComment}
+                  onChangeText={setReportComment}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+
+                <Text style={styles.reportDisclaimer}>
+                  ℹ️ Your report will be reviewed by our team. All reports are kept confidential.
+                </Text>
+              </ScrollView>
+
+              <View style={styles.reportModalFooter}>
+                <TouchableOpacity
+                  style={styles.reportCancelButton}
+                  onPress={handleCloseReportModal}
+                >
+                  <Text style={styles.reportCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.reportSubmitButton,
+                    (!selectedReportReason || isSubmittingReport) && styles.reportSubmitButtonDisabled
+                  ]}
+                  onPress={handleSubmitReport}
+                  disabled={!selectedReportReason || isSubmittingReport}
+                >
+                  <Text style={styles.reportSubmitButtonText}>
+                    {isSubmittingReport ? "Submitting..." : "Submit Report"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* Ride History Modal */}
         <Modal
@@ -1152,6 +1542,7 @@ export default function UserHome() {
   );
 }
 
+// Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1251,6 +1642,39 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
+  // Driver Card Styles
+  driverCard: {
+    position: "absolute",
+    bottom: 40,
+    left: 20,
+    right: 20,
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 2,
+    borderColor: "#28a745",
+  },
+  driverCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  driverCardIcon: {
+    fontSize: 24,
+    marginRight: 8,
+  },
+  driverCardTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#28a745",
+  },
+  // Waiting Card Styles
   waitingCard: {
     position: "absolute",
     bottom: 40,
@@ -1271,7 +1695,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 8,
+    marginBottom: 12,
   },
   waitingIcon: {
     fontSize: 24,
@@ -1282,13 +1706,79 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#333",
   },
+  driverInfoContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  driverInfo: {
+    flex: 1,
+  },
+  driverName: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 4,
+  },
+  driverDetails: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 2,
+  },
+  callButton: {
+    backgroundColor: "#28a745",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 12,
+    shadowColor: "#28a745",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  callIcon: {
+    fontSize: 28,
+  },
+  driverSubtext: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 16,
+  },
   waitingSubtext: {
     fontSize: 14,
     color: "#666",
     textAlign: "center",
     marginBottom: 16,
   },
+  // Action Buttons Row (Report + Cancel)
+  actionButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  reportButton: {
+    flex: 1,
+    backgroundColor: "#FFA500",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  reportButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
   cancelButton: {
+    flex: 1,
     backgroundColor: "#F44336",
     paddingVertical: 14,
     borderRadius: 12,
@@ -1298,6 +1788,134 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+  },
+  // Report Modal Styles
+  reportModalContent: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "85%",
+    width: "100%",
+  },
+  reportModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e0e0",
+  },
+  reportModalTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  reportModalBody: {
+    padding: 20,
+    maxHeight: "70%",
+  },
+  reportDriverInfo: {
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  reportDriverName: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 4,
+  },
+  reportDriverDetails: {
+    fontSize: 14,
+    color: "#666",
+  },
+  reportSectionLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  reportReasonsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 20,
+  },
+  reportReasonChip: {
+    backgroundColor: "#f0f0f0",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: "#e0e0e0",
+  },
+  reportReasonChipSelected: {
+    backgroundColor: "#FFA500",
+    borderColor: "#FFA500",
+  },
+  reportReasonText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
+  },
+  reportReasonTextSelected: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  reportCommentInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    minHeight: 100,
+    backgroundColor: "#fff",
+    marginBottom: 16,
+  },
+  reportDisclaimer: {
+    fontSize: 13,
+    color: "#999",
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingHorizontal: 10,
+  },
+  reportModalFooter: {
+    flexDirection: "row",
+    gap: 10,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#e0e0e0",
+  },
+  reportCancelButton: {
+    flex: 1,
+    backgroundColor: "#f0f0f0",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  reportCancelButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#666",
+  },
+  reportSubmitButton: {
+    flex: 1,
+    backgroundColor: "#FFA500",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  reportSubmitButtonDisabled: {
+    backgroundColor: "#ccc",
+  },
+  reportSubmitButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#fff",
   },
   overlay: {
     position: "absolute",
@@ -1376,6 +1994,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#666",
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+  },
+  picker: {
+    height: 50,
   },
   input: {
     height: 50,
@@ -1625,7 +2253,7 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
+    justifyContent: "flex-end",
     alignItems: "center",
   },
   modalContent: {
@@ -1634,6 +2262,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: "80%",
     alignItems: "center",
+    marginBottom: "50%",
   },
   modalIconContainer: {
     width: 60,
@@ -1654,7 +2283,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
   },
-
   modalMessage: {
     fontSize: 16,
     textAlign: "center",
@@ -1679,8 +2307,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  bookaride:{
-    width:"100%",
-    height:"100%",
-  }
+  bookaride: {
+    width: "100%",
+    height: "100%",
+  },
 });

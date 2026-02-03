@@ -35,6 +35,8 @@ export default function Register() {
   // Driver-specific
   const [todaName, setTodaName] = useState("");
   const [licensePlate, setLicensePlate] = useState("");
+    const [driversLicense,setDriversLicense] = useState("");
+    const [sapiId,setSapiId] = useState("");
   const [idCardUri, setIdCardUri] = useState<string | null>(null);
   const [idCardBase64, setIdCardBase64] = useState<string | null>(null);
   const [isValidResident, setIsValidResident] = useState(false);
@@ -198,7 +200,7 @@ export default function Register() {
     if (!isVerified) {
       return showModal("error", "Verify email first");
     }
-    if (role === "driver" && (!todaName || !licensePlate || !idCardUri || !isValidResident)) {
+    if (role === "driver" && (!todaName || !licensePlate || !idCardUri || !isValidResident || !driversLicense || !sapiId)) {
       return showModal("error", "Complete driver info and ID");
     }
     if (password !== confirmPassword) {
@@ -220,6 +222,8 @@ export default function Register() {
       if (role === "driver") {
         body.todaName = todaName;
         body.licensePlate = licensePlate.toUpperCase();
+        body.driversLicense = driversLicense.toUpperCase();
+        body.sapiId = sapiId.toUpperCase();
         body.idCardImage = idCardBase64;
         body.address = detectedAddress;
       }
@@ -377,6 +381,20 @@ export default function Register() {
                   placeholder="License Plate"
                   value={licensePlate}
                   onChangeText={setLicensePlate}
+                  autoCapitalize="characters"
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Driver's License"
+                  value={driversLicense}
+                  onChangeText={setDriversLicense}
+                  autoCapitalize="characters"
+                />
+                                <TextInput
+                  style={styles.input}
+                  placeholder="SAPI ID"
+                  value={sapiId}
+                  onChangeText={setSapiId}
                   autoCapitalize="characters"
                 />
                 <TouchableOpacity style={styles.scanIDButton} onPress={handlePickImage}>

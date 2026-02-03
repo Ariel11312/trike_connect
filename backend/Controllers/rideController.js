@@ -1,6 +1,31 @@
 import Ride from '../models/rideModel.js';
 import User from '../models/user.js';
 
+// @desc    Get available TODA names
+// @route   GET /api/rides/toda-names
+// @access  Private
+export const getTodaNames = async (req, res) => {
+  try {
+    // Get unique TODA names from drivers
+    const todaNames = await User.distinct('todaName', { 
+      role: 'driver',
+      todaName: { $exists: true, $ne: '' }
+    });
+
+    res.status(200).json({
+      success: true,
+      todaNames: todaNames.sort(),
+    });
+  } catch (error) {
+    console.error('Error fetching TODA names:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching TODA names',
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Book a new ride
 // @route   POST /api/rides/book
 // @access  Private
@@ -14,13 +39,14 @@ export const bookRide = async (req, res) => {
       dropoffLocation,
       distance,
       fare,
+      todaName,
     } = req.body;
 
     // Validate required fields
-    if (!userId || !firstname || !lastname || !pickupLocation || !dropoffLocation || !distance || !fare) {
+    if (!userId || !firstname || !lastname || !pickupLocation || !dropoffLocation || !distance || !fare || !todaName) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required fields',
+        message: 'Please provide all required fields including TODA name',
       });
     }
 
@@ -58,6 +84,7 @@ export const bookRide = async (req, res) => {
       dropoffLocation,
       distance,
       fare,
+      todaName,
       status: 'pending',
     });
 
@@ -85,7 +112,7 @@ export const getUserRides = async (req, res) => {
 
     const rides = await Ride.find({ userId })
       .sort({ createdAt: -1 })
-      .populate('driver', 'firstname lastname phone role'); // Changed to match User model
+      .populate('driver', 'firstname lastname phone role');
 
     res.status(200).json({
       success: true,
@@ -111,7 +138,7 @@ export const getRideById = async (req, res) => {
 
     const ride = await Ride.findById(id)
       .populate('userId', 'firstName lastName email')
-      .populate('driver', 'firstname lastname phone role'); // Changed to match User model
+      .populate('driver', 'firstName lastName phoneNumber todaName licensePlate role');
 
     if (!ride) {
       return res.status(404).json({
@@ -139,20 +166,24 @@ export const getRideById = async (req, res) => {
 // @access  Private/Admin
 export const getAllRides = async (req, res) => {
   try {
-    const { status, page = 1, limit = 10 } = req.query;
+    const { status, todaName, page = 1, limit = 10 } = req.query;
 
-    const query = status ? { status } : {};
+    const query = {};
+
+    if (status) query.status = status;
+    if (todaName) query.todaName = todaName;
     
     const rides = await Ride.find(query)
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(Number(limit))
+      .skip((Number(page) - 1) * Number(limit))
       .populate('userId', 'firstName lastName email')
-      .populate('driver', 'firstname lastname phone role'); // Added populate for completeness
+      .populate(
+        'driver',
+        'firstName lastName phoneNumber todaName licensePlate role'
+      );
 
     const total = await Ride.countDocuments(query);
-
-    console.log('Sending rides:', rides.length);
 
     res.status(200).json({
       success: true,
@@ -305,7 +336,7 @@ export const assignDriver = async (req, res) => {
     await ride.save();
 
     // Populate the driver info before sending response
-    await ride.populate('driver', 'firstname lastname phone role');
+    await ride.populate('driver', 'firstName lastName phoneNumber todaName licensePlate role');
 
     res.status(200).json({
       success: true,
@@ -317,6 +348,72 @@ export const assignDriver = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while assigning driver',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Update driver field on ride
+// @route   PUT /api/rides/:id/driver
+// @access  Private
+export const updateRideDriver = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { driver: driverId } = req.body;
+
+    console.log('📝 Updating ride driver:', { rideId: id, driverId });
+
+    if (!driverId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver ID is required',
+      });
+    }
+
+    // Verify the driver exists
+    const driver = await User.findById(driverId);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found',
+      });
+    }
+
+    if (driver.role !== 'driver') {
+      return res.status(400).json({
+        success: false,
+        message: 'User is not a driver',
+      });
+    }
+
+    const ride = await Ride.findById(id);
+
+    if (!ride) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ride not found',
+      });
+    }
+
+    // Update the driver field
+    ride.driver = driverId;
+    await ride.save();
+
+    // Populate the driver info before sending response
+    await ride.populate('driver', 'firstName lastName phoneNumber todaName licensePlate role');
+
+    console.log('✅ Driver updated successfully:', ride.driver);
+
+    res.status(200).json({
+      success: true,
+      message: 'Driver updated successfully',
+      ride,
+    });
+  } catch (error) {
+    console.error('❌ Error updating ride driver:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating driver',
       error: error.message,
     });
   }

@@ -128,7 +128,7 @@ const validateAndFormatPhoneNumber = (phoneNumber) => {
 // @access  Public
 export const signup = async (req, res) => {
   try {
-    const { firstName, lastName, email, phoneNumber, password, role, todaName, licensePlate, idCardImage, address } = req.body;
+    const { firstName, lastName, email, phoneNumber, password, role, todaName, licensePlate, driversLicense, sapiId, idCardImage, address } = req.body;
 
     // Validate required fields
     if (!firstName || !lastName || !email || !phoneNumber || !password) {
@@ -179,7 +179,7 @@ export const signup = async (req, res) => {
 
     // If driver, save ID image and add driver-specific fields
     if (role === 'driver') {
-      if (!todaName || !licensePlate || !idCardImage || !address) {
+      if (!todaName || !licensePlate || !idCardImage || !address || !driversLicense || !sapiId) {
         return res.status(400).json({
           success: false,
           message: 'Driver registration requires TODA name, license plate, ID image, and verified address',
@@ -195,6 +195,8 @@ export const signup = async (req, res) => {
       // Add driver-specific fields
       userData.todaName = todaName;
       userData.licensePlate = licensePlate.toUpperCase();
+      userData.driversLicense = driversLicense.toUpperCase();
+      userData.sapiId = sapiId.toUpperCase();
       userData.idCardImage = filename; // Save filename only
       userData.address = address;
     }
@@ -218,6 +220,8 @@ export const signup = async (req, res) => {
         ...(role === 'driver' && {
           todaName: user.todaName,
           licensePlate: user.licensePlate,
+          driversLicense: driversLicense.licensePlate,
+          sapiId: sapiId.licensePlate,
           address: user.address,
         }),
       },
@@ -406,6 +410,32 @@ export const verifyID = async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to verify ID card' 
+    });
+  }
+};
+export const getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id).select('-password -emailVerificationCode -resetPasswordToken');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching user',
+      error: error.message,
     });
   }
 };

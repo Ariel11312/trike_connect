@@ -171,7 +171,7 @@ export default function Register() {
         setDetectedAddress(data.address);
         setIsValidResident(data.isValidResident);
         if (data.isValidResident) {
-          showModal("success", `ID Verified: ${data.address}`);
+          showModal("success", `ID Verified: ${data.address}, It will check by the Admin`);
         } else {
           showModal("error", `Address invalid: ${data.address}`);
           setIdCardUri(null);
@@ -397,6 +397,7 @@ export default function Register() {
                   onChangeText={setSapiId}
                   autoCapitalize="characters"
                 />
+                <Text>Upload Driver's License</Text>
                 <TouchableOpacity style={styles.scanIDButton} onPress={handlePickImage}>
                   <Text style={styles.scanIDText}>
                     {idCardUri ? "Change ID" : "Upload ID"}

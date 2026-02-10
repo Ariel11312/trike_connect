@@ -17,7 +17,9 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.0.0",
     "mongoose": "^9.1.5",
+    "react-native-vector-icons": "^10.3.0",
     "resend": "^6.9.1",
+    "socket.io": "^4.8.3",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {

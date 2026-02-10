@@ -37,7 +37,7 @@ export default function Index() {
       if (userRole === "driver") {
         router.replace("/driverHome");
       } else if (userRole === "commuter") {
-        router.replace("/userHome");
+        router.replace("/chat");
       } else {
         // Default fallback
         router.replace("/userHome");

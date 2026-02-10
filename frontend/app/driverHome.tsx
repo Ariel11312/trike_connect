@@ -7,12 +7,14 @@ import {
   ScrollView,
   Alert,
   RefreshControl,
+  Linking,
 } from "react-native";
 import { useState, useEffect, useRef } from "react";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Camera } from "react-native-maps";
 import * as Location from "expo-location";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { io, Socket } from 'socket.io-client';
 
 interface LocationData {
   name: string;
@@ -22,7 +24,13 @@ interface LocationData {
 
 interface Ride {
   _id: string;
-  userId: string;
+  userId: string | {
+    _id: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    phoneNumber?: string;
+  };
   firstname: string;
   lastname: string;
   pickupLocation: LocationData;
@@ -38,7 +46,7 @@ interface Driver {
   id: string;
   firstname: string;
   lastname: string;
-todaName: string;
+  todaName: string;
 }
 
 interface LocationWithHeading {
@@ -52,13 +60,26 @@ interface GroupedRides {
   [date: string]: Ride[];
 }
 
+interface User {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+}
+
 // Storage keys
 const STORAGE_KEYS = {
   ACTIVE_RIDE: '@driver_active_ride',
   RIDE_PHASE: '@driver_ride_phase',
+  LAST_READ_MESSAGE: '@driver_last_read_message',
 };
 
+// CONFIGURATION
+const SOCKET_URL = 'http://192.168.100.37:5000';
+const API_URL = 'http://192.168.100.37:5000';
+
 export default function DriverHome() {
+  const router = useRouter();
   const [driver, setDriver] = useState<Driver | null>(null);
   const [pendingRides, setPendingRides] = useState<Ride[]>([]);
   const [completedRides, setCompletedRides] = useState<Ride[]>([]);
@@ -69,6 +90,16 @@ export default function DriverHome() {
   const [showHistory, setShowHistory] = useState(false);
   const [isRestoringState, setIsRestoringState] = useState(true);
   const [historyGrouping, setHistoryGrouping] = useState<"day" | "month" | "year">("day");
+
+  // Chat notification states
+  const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [lastReadMessageId, setLastReadMessageId] = useState<string | null>(null);
+
+  // Passenger/User info
+  const [passengerInfo, setPassengerInfo] = useState<User | null>(null);
+  const [isLoadingPassengerInfo, setIsLoadingPassengerInfo] = useState(false);
 
   const [currentLocation, setCurrentLocation] = useState<LocationWithHeading | null>(null);
   const [mapRegion, setMapRegion] = useState({
@@ -85,6 +116,354 @@ export default function DriverHome() {
   const headingSubscription = useRef<Location.LocationSubscription | null>(null);
   const lastHeading = useRef<number>(0);
   const isNavigating = useRef<boolean>(false);
+  const socketRef = useRef<Socket | null>(null);
+
+  // Initialize Socket.IO connection
+  useEffect(() => {
+    console.log('🔌 Initializing socket connection...');
+    
+    if (!socketRef.current) {
+      socketRef.current = io(SOCKET_URL, {
+        autoConnect: false,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 10,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+        transports: ['websocket', 'polling'],
+      });
+
+      console.log('✅ Socket instance created');
+    }
+
+    return () => {
+      if (socketRef.current?.connected) {
+        console.log('🔌 Disconnecting socket');
+        socketRef.current.disconnect();
+      }
+    };
+  }, []);
+
+  // Load last read message on mount
+  useEffect(() => {
+    loadLastReadMessage();
+  }, []);
+
+  const loadLastReadMessage = async () => {
+    try {
+      const savedMessageId = await AsyncStorage.getItem(STORAGE_KEYS.LAST_READ_MESSAGE);
+      if (savedMessageId) {
+        setLastReadMessageId(savedMessageId);
+        console.log('📖 Loaded last read message:', savedMessageId);
+      }
+    } catch (error) {
+      console.error('Error loading last read message:', error);
+    }
+  };
+
+  // Setup socket listeners when driver is loaded
+  useEffect(() => {
+    if (!socketRef.current || !driver?.id) return;
+
+    const socket = socketRef.current;
+
+    console.log('🔧 Setting up socket listeners for driver:', driver.id);
+    socket.removeAllListeners();
+
+    // Connection events
+    socket.on('connect', () => {
+      console.log('✅ Connected to server with ID:', socket.id);
+      setSocketConnected(true);
+      
+      console.log('Emitting user-online event for driver:', driver.id);
+      socket.emit('user-online', driver.id);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('❌ Disconnected from server. Reason:', reason);
+      setSocketConnected(false);
+    });
+
+    socket.on('connect_error', (error: Error) => {
+      console.error('❌ Connection error:', error.message);
+      setSocketConnected(false);
+    });
+
+    // Handle incoming messages
+    socket.on('receive-message', (messageData: any) => {
+      console.log('📨 Received message:', messageData);
+
+      const { message } = messageData;
+      
+      // Check if this is a new message (not already read)
+      if (driver?.id && message.sender !== driver.id) {
+        // Only alert if this message is newer than the last read message
+        const isNewMessage = !lastReadMessageId || message._id !== lastReadMessageId;
+        
+        if (isNewMessage) {
+          console.log('💬 New unread message from commuter!');
+          setHasUnreadMessages(true);
+          setUnreadCount(prev => prev + 1);
+          
+          Alert.alert(
+            '💬 New Message',
+            message.text || 'You have a new message from a commuter',
+            [
+              {
+                text: 'View',
+                onPress: () => handleMessagePassenger(),
+              },
+              {
+                text: 'Later',
+                style: 'cancel',
+              },
+            ]
+          );
+        }
+      }
+    });
+
+    // Connect socket
+    if (!socket.connected) {
+      console.log('🔌 Connecting socket for driver:', driver.id);
+      socket.connect();
+    }
+
+    return () => {
+      socket.removeAllListeners();
+    };
+  }, [driver?.id, lastReadMessageId]);
+
+  // Fetch unread message count on mount
+  useEffect(() => {
+    if (driver?.id) {
+      fetchUnreadMessageCount();
+    }
+  }, [driver?.id]);
+
+  const fetchUnreadMessageCount = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/chat/unread-count`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const count = data.count || 0;
+        setUnreadCount(count);
+        setHasUnreadMessages(count > 0);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching unread count:', error);
+    }
+  };
+
+  // Extract passenger info when active ride changes
+  useEffect(() => {
+    if (activeRide?.userId) {
+      console.log('🔄 Active ride changed, extracting passenger info from userId:', activeRide.userId);
+      
+      // Check if userId is already populated (an object) or just a string ID
+      if (typeof activeRide.userId === 'object' && '_id' in activeRide.userId) {
+        // userId is already populated with user data
+        const userData: User = {
+          _id: activeRide.userId._id,
+          firstName: activeRide.userId.firstName || activeRide.firstname,
+          lastName: activeRide.userId.lastName || activeRide.lastname,
+          phoneNumber: activeRide.userId.phoneNumber || '',
+        };
+        console.log('✅ Passenger info extracted from populated userId:', userData);
+        setPassengerInfo(userData);
+        setIsLoadingPassengerInfo(false);
+      } else if (typeof activeRide.userId === 'string') {
+        // userId is just a string, need to fetch user data
+        console.log('🔄 userId is a string, fetching passenger info...');
+        fetchPassengerInfo(activeRide.userId);
+      }
+    } else {
+      console.log('ℹ️ No active ride, clearing passenger info');
+      setPassengerInfo(null);
+    }
+  }, [activeRide?.userId]);
+
+  const fetchPassengerInfo = async (userId: string) => {
+    if (!userId || typeof userId !== 'string') {
+      console.error('❌ Invalid userId provided to fetchPassengerInfo:', userId);
+      return;
+    }
+
+    setIsLoadingPassengerInfo(true);
+    
+    try {
+      console.log('🔄 Fetching passenger info for userId:', userId);
+      console.log('📡 API URL:', `${API_URL}/api/auth/user/${userId}`);
+      
+      const res = await fetch(`${API_URL}/api/auth/user/${userId}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('📊 Response status:', res.status);
+      const data = await res.json();
+      console.log('📦 Response data:', JSON.stringify(data, null, 2));
+
+      if (data.success && data.user) {
+        const userData: User = {
+          _id: data.user._id || data.user.id,
+          firstName: data.user.firstName,
+          lastName: data.user.lastName,
+          phoneNumber: data.user.phoneNumber || '',
+        };
+        
+        console.log('✅ Successfully loaded passenger info:', userData);
+        setPassengerInfo(userData);
+      } else {
+        console.error('❌ Failed to fetch passenger info - Invalid response:', data);
+        setPassengerInfo(null);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching passenger info:', error);
+      setPassengerInfo(null);
+    } finally {
+      setIsLoadingPassengerInfo(false);
+    }
+  };
+
+  const handleCallPassenger = () => {
+    console.log('📞 handleCallPassenger called');
+    console.log('📊 passengerInfo:', passengerInfo);
+    console.log('📊 activeRide:', activeRide);
+
+    if (!passengerInfo) {
+      console.error('❌ No passenger info available');
+      Alert.alert("Error", "Passenger information not available. Please wait while we load it.");
+      
+      // Try to fetch again if we have userId
+      if (activeRide?.userId) {
+        console.log('🔄 Retrying passenger info fetch...');
+        fetchPassengerInfo(activeRide.userId);
+      }
+      return;
+    }
+
+    if (!passengerInfo.phoneNumber) {
+      console.error('❌ No phone number available');
+      Alert.alert("Error", "Passenger phone number not available.");
+      return;
+    }
+
+    const phoneNumber = passengerInfo.phoneNumber.replace(/[^0-9+]/g, '');
+    console.log('📞 Calling:', phoneNumber);
+    
+    Linking.openURL(`tel:${phoneNumber}`)
+      .then(() => {
+        console.log('✅ Call initiated successfully');
+      })
+      .catch((error) => {
+        console.error('❌ Error initiating call:', error);
+        Alert.alert("Error", "Unable to make call. Please check your phone settings.");
+      });
+  };
+
+  const handleMessagePassenger = async () => {
+    console.log('💬 handleMessagePassenger called');
+    console.log('📊 passengerInfo:', passengerInfo);
+    console.log('📊 driver:', driver);
+    console.log('📊 activeRide:', activeRide);
+
+    if (!driver) {
+      console.error('❌ No driver info available');
+      Alert.alert("Error", "Driver information not loaded. Please try again.");
+      return;
+    }
+
+    if (!passengerInfo) {
+      console.error('❌ No passenger info available');
+      Alert.alert("Error", "Passenger information not available. Please wait while we load it.");
+      
+      // Try to fetch again if we have userId
+      if (activeRide?.userId) {
+        console.log('🔄 Retrying passenger info fetch...');
+        await fetchPassengerInfo(activeRide.userId);
+      }
+      return;
+    }
+
+    try {
+      console.log('🔄 Creating/opening chat with passenger...');
+      console.log('Current Driver ID:', driver.id);
+      console.log('Passenger ID:', passengerInfo._id);
+
+      const otherUserId = passengerInfo._id;
+
+      // Create or get existing chat with the passenger
+      const response = await fetch(`${API_URL}/api/chat/create-new-chat`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          members: [driver.id, otherUserId]
+        })
+      });
+
+      console.log('📊 Chat creation response status:', response.status);
+
+      // Check if response is ok
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Server error:', errorText);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Parse JSON response
+      const responseData = await response.json();
+      console.log('📦 Chat response data:', responseData);
+
+      if (responseData.success) {
+        console.log('✅ Chat created/retrieved:', responseData.data._id);
+
+        // Navigate to chat interface
+        router.push({
+          pathname: '/chat',
+          params: {
+            chatId: responseData.data._id,
+            driverName: `${passengerInfo.firstName} ${passengerInfo.lastName}`,
+            otherUserId: otherUserId,
+          }
+        });
+      } else {
+        console.error('❌ Failed to create chat:', responseData);
+        Alert.alert("Error", responseData.message || "Failed to start chat. Please try again.");
+      }
+    } catch (error) {
+      console.error('❌ Error creating chat:', error);
+      Alert.alert("Error", "Unable to start chat. Please check your connection.");
+    }
+  };
+
+  // This function should be called from the chat page when messages are viewed
+  const markMessagesAsRead = async (latestMessageId: string) => {
+    try {
+      console.log('✅ Marking messages as read up to:', latestMessageId);
+      setLastReadMessageId(latestMessageId);
+      setHasUnreadMessages(false);
+      setUnreadCount(0);
+      
+      // Persist to AsyncStorage
+      await AsyncStorage.setItem(STORAGE_KEYS.LAST_READ_MESSAGE, latestMessageId);
+    } catch (error) {
+      console.error('Error saving last read message:', error);
+    }
+  };
 
   // Restore persisted state on app launch
   useEffect(() => {
@@ -174,7 +553,7 @@ export default function DriverHome() {
 
   // Fetch driver info
   useEffect(() => {
-    fetch('http://192.168.100.37:5000/api/auth/me', {
+    fetch(`${API_URL}/api/auth/me`, {
       method: 'GET',
       credentials: 'include',
       headers: {
@@ -189,7 +568,7 @@ export default function DriverHome() {
             id: data.user.id,
             firstname: data.user.firstName,
             lastname: data.user.lastName,
-             todaName: data.user.todaName, 
+            todaName: data.user.todaName, 
           });
         }
       })
@@ -216,7 +595,7 @@ export default function DriverHome() {
 
     const checkRideStatus = async () => {
       try {
-        const res = await fetch(`http://192.168.100.37:5000/api/rides/${activeRide._id}`, {
+        const res = await fetch(`${API_URL}/api/rides/${activeRide._id}`, {
           method: 'GET',
           credentials: 'include',
           headers: {
@@ -235,12 +614,19 @@ export default function DriverHome() {
             previousStatus: activeRide.status,
           });
           
+          // Update the active ride with fresh data (including potentially populated userId)
+          if (rideStatus === 'accepted' || rideStatus === 'in-progress') {
+            console.log('🔄 Updating active ride with fresh data');
+            setActiveRide(data.ride);
+          }
+          
           if (rideStatus === 'cancelled') {
             console.log('❌ Ride was cancelled');
             
             // Clear active ride state
             setActiveRide(null);
             setRidePhase(null);
+            setPassengerInfo(null);
             setRouteCoordinates([]);
             setShowRidesList(true);
             
@@ -429,35 +815,35 @@ export default function DriverHome() {
   };
 
   // Fetch pending rides
-const fetchPendingRides = async () => {
-  if (!driver?.todaName) return;
+  const fetchPendingRides = async () => {
+    if (!driver?.todaName) return;
 
-  try {
-    const res = await fetch(
-      `http://192.168.100.37:5000/api/rides?status=pending&todaName=${encodeURIComponent(driver.todaName)}`,
-      {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+    try {
+      const res = await fetch(
+        `${API_URL}/api/rides?status=pending&todaName=${encodeURIComponent(driver.todaName)}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const data = await res.json();
+
+      if (data.success) {
+        setPendingRides(data.rides);
       }
-    );
-
-    const data = await res.json();
-
-    if (data.success) {
-      setPendingRides(data.rides);
+    } catch (error) {
+      console.error('Error fetching rides:', error);
     }
-  } catch (error) {
-    console.error('Error fetching rides:', error);
-  }
-};
+  };
 
   // Fetch completed rides history
   const fetchCompletedRides = async () => {
     try {
-      const res = await fetch('http://192.168.100.37:5000/api/rides?status=completed', {
+      const res = await fetch(`${API_URL}/api/rides?status=completed`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -475,19 +861,19 @@ const fetchPendingRides = async () => {
     }
   };
 
-useEffect(() => {
-  console.log('Component mounted, starting interval');
-  fetchPendingRides();
-  
-  const interval = setInterval(() => {
+  useEffect(() => {
+    console.log('Component mounted, starting interval');
     fetchPendingRides();
-  }, 5000);
-  
-  return () => {
-    console.log('Component unmounting, clearing interval');
-    clearInterval(interval);
-  };
-}, []);
+    
+    const interval = setInterval(() => {
+      fetchPendingRides();
+    }, 5000);
+    
+    return () => {
+      console.log('Component unmounting, clearing interval');
+      clearInterval(interval);
+    };
+  }, [driver?.todaName]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -627,9 +1013,10 @@ useEffect(() => {
     try {
       console.log('🎯 Accepting ride:', ride._id);
       console.log('👤 Driver ID:', driver.id);
+      console.log('👤 Passenger User ID:', ride.userId);
       
       // First, update the ride status to accepted
-      const statusRes = await fetch(`http://192.168.100.37:5000/api/rides/${ride._id}/status`, {
+      const statusRes = await fetch(`${API_URL}/api/rides/${ride._id}/status`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -644,7 +1031,7 @@ useEffect(() => {
       console.log('Status update response:', statusData);
 
       // Then, assign the driver to the ride
-      const driverRes = await fetch(`http://192.168.100.37:5000/api/rides/${ride._id}/driver`, {
+      const driverRes = await fetch(`${API_URL}/api/rides/${ride._id}/driver`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -663,6 +1050,8 @@ useEffect(() => {
         setActiveRide(ride);
         setRidePhase("to-pickup");
         setShowRidesList(false);
+        
+        // Passenger info will be extracted automatically by the useEffect
         
         if (currentLocation) {
           await getDirections(
@@ -692,7 +1081,7 @@ useEffect(() => {
 
   const handleRejectRide = async (rideId: string) => {
     try {
-      const res = await fetch(`http://192.168.100.37:5000/api/rides/${rideId}/cancel`, {
+      const res = await fetch(`${API_URL}/api/rides/${rideId}/cancel`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -763,7 +1152,7 @@ useEffect(() => {
           text: "Yes, Complete",
           onPress: async () => {
             try {
-              const res = await fetch(`http://192.168.100.37:5000/api/rides/${activeRide._id}/status`, {
+              const res = await fetch(`${API_URL}/api/rides/${activeRide._id}/status`, {
                 method: 'PUT',
                 credentials: 'include',
                 headers: {
@@ -778,6 +1167,7 @@ useEffect(() => {
                 Alert.alert("Trip Completed", `You earned ₱${activeRide.fare}!`);
                 setActiveRide(null);
                 setRidePhase(null);
+                setPassengerInfo(null);
                 setRouteCoordinates([]);
                 setShowRidesList(true);
                 
@@ -977,6 +1367,54 @@ useEffect(() => {
                 : activeRide.dropoffLocation.name}
             </Text>
             <Text style={styles.fareInfo}>Fare: ₱{activeRide.fare}</Text>
+            
+            {/* Passenger Info Container with Message and Call Buttons */}
+            <View style={styles.passengerInfoContainer}>
+              <View style={styles.passengerInfo}>
+                <Text style={styles.passengerInfoName}>
+                  👤 {passengerInfo ? `${passengerInfo.firstName} ${passengerInfo.lastName}` : `${activeRide.firstname} ${activeRide.lastname}`}
+                </Text>
+                {passengerInfo?.phoneNumber ? (
+                  <Text style={styles.passengerInfoPhone}>
+                    📞 {passengerInfo.phoneNumber}
+                  </Text>
+                ) : isLoadingPassengerInfo ? (
+                  <Text style={styles.passengerInfoPhone}>
+                    Loading contact info...
+                  </Text>
+                ) : (
+                  <Text style={styles.passengerInfoPhone}>
+                    Contact info not available
+                  </Text>
+                )}
+              </View>
+
+              {/* Action Buttons - Message and Call */}
+              <View style={styles.passengerActionButtons}>
+                <TouchableOpacity
+                  style={[styles.messageButton, !passengerInfo && styles.disabledButton]}
+                  onPress={handleMessagePassenger}
+                  disabled={!passengerInfo}
+                >
+                  <Text style={styles.actionIcon}>💬</Text>
+                  {hasUnreadMessages && (
+                    <View style={styles.notificationBadge}>
+                      <Text style={styles.notificationText}>
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.callButton, (!passengerInfo || !passengerInfo.phoneNumber) && styles.disabledButton]}
+                  onPress={handleCallPassenger}
+                  disabled={!passengerInfo || !passengerInfo.phoneNumber}
+                >
+                  <Text style={styles.actionIcon}>📞</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
             
             <TouchableOpacity
               style={styles.actionButton}
@@ -1345,6 +1783,89 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#007AFF",
     marginBottom: 12,
+  },
+  // Passenger Info Container
+  passengerInfoContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  passengerInfo: {
+    flex: 1,
+  },
+  passengerInfoName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 4,
+  },
+  passengerInfoPhone: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 2,
+  },
+  passengerActionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginLeft: 12,
+  },
+  messageButton: {
+    backgroundColor: '#007AFF',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  callButton: {
+    backgroundColor: '#28a745',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#28a745',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  disabledButton: {
+    backgroundColor: '#cccccc',
+    opacity: 0.5,
+  },
+  actionIcon: {
+    fontSize: 28,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: 'white',
+  },
+  notificationText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   actionButton: {
     backgroundColor: "#28a745",

@@ -18,6 +18,7 @@ import * as Location from "expo-location";
 import { Stack, router } from "expo-router";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Picker } from '@react-native-picker/picker';
+import { axiosInstanceWithCookies } from '../services';
 
 interface LocationData {
   name: string;
@@ -115,17 +116,17 @@ export default function UserHome() {
     latitudeDelta: 0.1,
     longitudeDelta: 0.1,
   });
-  
+
   // Search states
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResults, setSearchResults] = useState<LocationData[]>([]);
-  
+
   // Route line coordinates
   const [routeCoordinates, setRouteCoordinates] = useState<
     { latitude: number; longitude: number }[]
   >([]);
-  
+
   // Sample popular locations
   const popularLocations: LocationData[] = [
     { name: "SM City Clark", latitude: 15.1775, longitude: 120.5886 },
@@ -181,7 +182,7 @@ export default function UserHome() {
   const restorePersistedState = async () => {
     try {
       console.log('🔄 Restoring user ride state...');
-      
+
       const [savedRide, savedWaiting, savedBooking] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.CURRENT_RIDE),
         AsyncStorage.getItem(STORAGE_KEYS.IS_WAITING),
@@ -192,7 +193,7 @@ export default function UserHome() {
         const ride = JSON.parse(savedRide);
         console.log('✅ Restored current ride:', ride._id);
         console.log('📋 Full ride object:', JSON.stringify(ride, null, 2));
-        
+
         setCurrentRide(ride);
         setIsWaitingForDriver(true);
 
@@ -200,7 +201,7 @@ export default function UserHome() {
         if (savedBooking) {
           const bookingData: BookingData = JSON.parse(savedBooking);
           console.log('✅ Restored booking data');
-          
+
           setPickupLocation(bookingData.pickupLocation);
           setDropoffLocation(bookingData.dropoffLocation);
           setCurrentLocation(bookingData.currentLocation);
@@ -215,10 +216,10 @@ export default function UserHome() {
             fitMapToMarkers(bookingData.currentLocation, bookingData.dropoffMarker);
           }
         }
-        
+
         // Check for driver ID in multiple possible locations
         const driverId = ride.driver || ride.driverId || ride.acceptedBy;
-        
+
         // Fetch driver info if ride has been accepted
         if (driverId) {
           console.log('🚗 Ride has driver, fetching info for:', driverId);
@@ -226,7 +227,7 @@ export default function UserHome() {
         } else {
           console.log('ℹ️ No driver assigned yet, status:', ride.status);
         }
-        
+
         console.log('🔄 Ride restored - checking status...');
       } else {
         console.log('ℹ️ No persisted ride state found');
@@ -312,7 +313,7 @@ export default function UserHome() {
 
       const updatedHistory = [newEntry, ...rideHistory];
       const trimmedHistory = updatedHistory.slice(0, 50);
-      
+
       await AsyncStorage.setItem(STORAGE_KEYS.RIDE_HISTORY, JSON.stringify(trimmedHistory));
       setRideHistory(trimmedHistory);
       console.log('✅ Saved ride to history');
@@ -323,33 +324,33 @@ export default function UserHome() {
 
   const groupHistoryByDate = () => {
     const grouped: { [key: string]: RideHistory[] } = {};
-    
+
     rideHistory.forEach(ride => {
       const date = new Date(ride.date);
       const today = new Date();
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      
+
       let dateKey = '';
-      
+
       if (date.toDateString() === today.toDateString()) {
         dateKey = 'Today';
       } else if (date.toDateString() === yesterday.toDateString()) {
         dateKey = 'Yesterday';
       } else {
-        dateKey = date.toLocaleDateString('en-US', { 
-          month: 'long', 
-          day: 'numeric', 
-          year: 'numeric' 
+        dateKey = date.toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
         });
       }
-      
+
       if (!grouped[dateKey]) {
         grouped[dateKey] = [];
       }
       grouped[dateKey].push(ride);
     });
-    
+
     return grouped;
   };
 
@@ -377,12 +378,12 @@ export default function UserHome() {
   // Persist ride state whenever it changes
   useEffect(() => {
     if (isRestoringState) return;
-    
+
     const persistState = async () => {
       try {
         if (currentRide && isWaitingForDriver) {
           console.log('💾 Persisting ride state...');
-          
+
           const bookingData: BookingData = {
             pickupLocation,
             dropoffLocation,
@@ -466,10 +467,10 @@ export default function UserHome() {
         if (data.success && data.ride) {
           const rideStatus = data.ride.status;
           const previousStatus = currentRide.status;
-          
+
           // Check for driver ID in multiple possible locations
           const driverId = data.ride.driver || data.ride.driverId || data.ride.acceptedBy;
-          
+
           console.log('📊 Ride status check:', {
             rideId: data.ride._id,
             status: rideStatus,
@@ -479,19 +480,19 @@ export default function UserHome() {
             currentAssignedDriver: !!assignedDriver,
             fullRideObject: data.ride
           });
-          
+
           // Update current ride with latest data
           setCurrentRide(data.ride);
-          
+
           if (rideStatus === 'accepted') {
             // Check if this is a new acceptance (status changed from pending to accepted)
             const isNewAcceptance = previousStatus !== 'accepted' && !assignedDriver;
-            
+
             // Always fetch driver info if we don't have it yet and we have a driver ID
             if (!assignedDriver && driverId) {
               console.log('🚗 Fetching driver info for:', driverId);
               await fetchDriverInfo(driverId);
-              
+
               // Show alert only once when status changes to accepted
               if (isNewAcceptance) {
                 Alert.alert(
@@ -529,10 +530,10 @@ export default function UserHome() {
     };
 
     const interval = setInterval(checkRideStatus, 3000);
-    
+
     // Run immediately on mount to check current status
     checkRideStatus();
-    
+
     return () => clearInterval(interval);
   }, [currentRide, isWaitingForDriver]);
 
@@ -594,9 +595,9 @@ export default function UserHome() {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const distance = R * c;
     return Math.round(distance * 100) / 100;
@@ -604,7 +605,7 @@ export default function UserHome() {
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    
+
     if (query.length === 0) {
       setSearchResults([]);
       setShowSearchResults(false);
@@ -620,7 +621,7 @@ export default function UserHome() {
       const filtered = popularLocations.filter((location) =>
         location.name.toLowerCase().includes(query.toLowerCase())
       );
-      
+
       setSearchResults(filtered);
       setShowSearchResults(filtered.length > 0);
     }
@@ -636,10 +637,10 @@ export default function UserHome() {
 
     try {
       const geocoded = await Location.geocodeAsync(address);
-      
+
       if (geocoded && geocoded.length > 0) {
         const { latitude, longitude } = geocoded[0];
-        
+
         const dropoffLoc: LocationData = {
           name: address,
           latitude,
@@ -696,7 +697,7 @@ export default function UserHome() {
       Alert.alert("Ongoing Ride", "Please complete or cancel your current ride before booking a new one.");
       return;
     }
-    
+
     const { latitude, longitude } = event.nativeEvent.coordinate;
 
     try {
@@ -758,26 +759,26 @@ export default function UserHome() {
   const getDirections = async (origin: LocationData, destination: LocationData) => {
     try {
       const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
-     
+
       console.log('Fetching route from:', url);
-     
+
       const response = await fetch(url);
       const data = await response.json();
-     
+
       console.log('OSRM Response:', data);
-     
+
       if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
         const route = data.routes[0];
         const coordinates = route.geometry.coordinates;
-       
+
         const points: { latitude: number; longitude: number }[] = coordinates.map((coord: number[]) => ({
           latitude: coord[1],
           longitude: coord[0],
         }));
-       
+
         console.log('Route points:', points.length);
         setRouteCoordinates(points);
-       
+
         const distanceInKm = route.distance / 1000;
         setDistance(Math.round(distanceInKm * 100) / 100);
         setFare(Math.ceil(distanceInKm * FARE_PER_KM));
@@ -865,7 +866,7 @@ export default function UserHome() {
       const res = await fetch("http://192.168.100.37:5000/api/rides/book", {
         method: "POST",
         credentials: 'include',
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -892,7 +893,7 @@ export default function UserHome() {
 
       if (res.ok) {
         await saveToHistory(currentLocation, dropoffMarker, distance, fare);
-        
+
         setCurrentRide(data.ride);
         setIsWaitingForDriver(true);
         showModal("success", `Ride booked successfully! Waiting for driver acceptance...`);
@@ -915,7 +916,7 @@ export default function UserHome() {
           cancelledReason: 'Cancelled by user'
         }),
       });
-      
+
       if (res.ok) {
         setIsWaitingForDriver(false);
         setCurrentRide(null);
@@ -942,6 +943,63 @@ export default function UserHome() {
     }
   };
 
+const handleMessageDriver = async () => {
+  if (!assignedDriver || !user) {
+    Alert.alert("Error", "Unable to start chat. Driver or user information missing.");
+    return;
+  }
+
+  try {
+    console.log('🔄 Creating/opening chat with driver...');
+    console.log('Current User ID:', user.id);
+    console.log('Driver ID:', assignedDriver._id);
+
+    const otherUserId = assignedDriver._id;
+
+    // Create or get existing chat with the driver
+    const response = await fetch('http://192.168.100.37:5000/api/chat/create-new-chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Add authorization header if needed
+        // 'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        members: [user.id, otherUserId] // ✅ FIXED: Send members array with both user IDs
+      })
+    });
+
+    // Check if response is ok
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Server error:', errorText);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Parse JSON response
+    const responseData = await response.json();
+
+    if (responseData.success) {
+      console.log('✅ Chat created/retrieved:', responseData.data._id);
+
+      // Navigate to chat interface
+      router.push({
+        pathname: '/chat',
+        params: {
+          chatId: responseData.data._id, // ✅ FIXED: Use correct path
+          driverName: `${assignedDriver.firstName} ${assignedDriver.lastName}`,
+          otherUserId: otherUserId,
+        }
+      });
+    } else {
+      console.error('❌ Failed to create chat:', responseData);
+      Alert.alert("Error", responseData.message || "Failed to start chat. Please try again.");
+    }
+  } catch (error) {
+    console.error('❌ Error creating chat:', error);
+    Alert.alert("Error", "Unable to start chat. Please check your connection.");
+  }
+};
   // Report Driver Functions
   const handleOpenReportModal = () => {
     setShowReportModal(true);
@@ -1114,12 +1172,22 @@ export default function UserHome() {
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={styles.callButton}
-                onPress={handleCallDriver}
-              >
-                <Text style={styles.callIcon}>📞</Text>
-              </TouchableOpacity>
+              {/* Action Buttons - Message and Call */}
+              <View style={styles.driverActionButtons}>
+                <TouchableOpacity
+                  style={styles.messageButton}
+                  onPress={handleMessageDriver}
+                >
+                  <Text style={styles.actionIcon}>💬</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.callButton}
+                  onPress={handleCallDriver}
+                >
+                  <Text style={styles.actionIcon}>📞</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             <Text style={styles.driverSubtext}>
@@ -1182,15 +1250,15 @@ export default function UserHome() {
             >
               <View style={styles.formContainer}>
                 <View style={styles.handleBar} />
- 
+
                 <ScrollView
-                  style={styles.bookaride}                
+                  style={styles.bookaride}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   contentContainerStyle={styles.scrollContent}
                 >
                   <Text style={styles.title}>Book a Ride</Text>
-                  
+
                   <Text style={styles.instructionText}>
                     📍 Search for a location OR tap anywhere on the map
                   </Text>
@@ -1234,7 +1302,7 @@ export default function UserHome() {
                       <Text style={styles.icon}>🔴</Text>
                       <Text style={styles.label}>Dropoff Location</Text>
                     </View>
-                    
+
                     <TextInput
                       style={styles.input}
                       placeholder="Type address or location name..."
@@ -1268,8 +1336,8 @@ export default function UserHome() {
 
                     {showSearchResults && searchResults.length > 0 && (
                       <View style={styles.searchResults}>
-                        <ScrollView 
-                          nestedScrollEnabled 
+                        <ScrollView
+                          nestedScrollEnabled
                           style={styles.searchScroll}
                           keyboardShouldPersistTaps="handled"
                         >
@@ -1467,9 +1535,9 @@ export default function UserHome() {
                         >
                           <View style={styles.historyItemHeader}>
                             <Text style={styles.historyTime}>
-                              {new Date(ride.date).toLocaleTimeString('en-US', { 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
+                              {new Date(ride.date).toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit'
                               })}
                             </Text>
                             <Text style={styles.historyFare}>₱{ride.fare}</Text>
@@ -1731,21 +1799,38 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 2,
   },
-  callButton: {
-    backgroundColor: "#28a745",
+  driverActionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginLeft: 12,
+  },
+  messageButton: {
+    backgroundColor: '#007AFF',
     width: 56,
     height: 56,
     borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 12,
-    shadowColor: "#28a745",
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#007AFF',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 4,
   },
-  callIcon: {
+  callButton: {
+    backgroundColor: '#28a745',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#28a745',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  actionIcon: {
     fontSize: 28,
   },
   driverSubtext: {

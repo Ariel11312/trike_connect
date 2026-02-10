@@ -439,3 +439,39 @@ export const getUserById = async (req, res) => {
     });
   }
 };
+
+export const getAllUsers = async (req, res) => {
+  try {
+    // Get logged-in user
+    const findType = await User.findById(req.user._id);
+
+    if (!findType) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    let targetType;
+    if (findType.userType === "student") {
+      targetType = "teacher";
+      console.log("Logged in as student, fetching teachers...");
+    } else if (findType.userType === "teacher") {
+      targetType = "student";
+      console.log("Logged in as teacher, fetching students...");
+    }
+
+    // Fetch only the opposite usertype, excluding the logged-in user
+    const users = await User.find({ 
+      _id: { $ne: req.user._id },
+      userType: targetType
+    });
+
+    res.send({
+      message: "Users fetched successfully",
+      success: true,
+      data: users
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};

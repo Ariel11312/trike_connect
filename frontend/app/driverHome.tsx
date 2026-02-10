@@ -47,6 +47,7 @@ interface Driver {
   firstname: string;
   lastname: string;
   todaName: string;
+  plateNumber?: string; // Add plate number field
 }
 
 interface LocationWithHeading {
@@ -78,6 +79,73 @@ const STORAGE_KEYS = {
 const SOCKET_URL = 'http://192.168.100.37:5000';
 const API_URL = 'http://192.168.100.37:5000';
 
+// CODING SCHEME HELPER FUNCTIONS
+const getCodingDigitsForDay = (dayOfWeek: number): number[] => {
+  // dayOfWeek: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  switch (dayOfWeek) {
+    case 1: // Monday
+      return [1, 2];
+    case 2: // Tuesday
+      return [3, 4];
+    case 3: // Wednesday
+      return [5, 6];
+    case 4: // Thursday
+      return [7, 8];
+    case 5: // Friday
+      return [9, 0];
+    case 0: // Sunday
+    case 6: // Saturday
+      return []; // No coding on weekends
+    default:
+      return [];
+  }
+};
+
+const getDayName = (dayOfWeek: number): string => {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return days[dayOfWeek];
+};
+
+const isTricycleCoded = (plateNumber: string | undefined): boolean => {
+  if (!plateNumber) return false;
+  
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  
+  // No coding on weekends
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return false;
+  }
+  
+  // Get the last digit of the plate number
+  const lastChar = plateNumber.trim().slice(-1);
+  const lastDigit = parseInt(lastChar, 10);
+  
+  // If last character is not a number, assume not coded
+  if (isNaN(lastDigit)) {
+    return false;
+  }
+  
+  // Get coding digits for today
+  const codingDigits = getCodingDigitsForDay(dayOfWeek);
+  
+  // Check if the last digit matches today's coding
+  return codingDigits.includes(lastDigit);
+};
+
+const getCodingInfo = () => {
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const dayName = getDayName(dayOfWeek);
+  const codingDigits = getCodingDigitsForDay(dayOfWeek);
+  
+  return {
+    dayName,
+    codingDigits,
+    isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+  };
+};
+
 export default function DriverHome() {
   const router = useRouter();
   const [driver, setDriver] = useState<Driver | null>(null);
@@ -90,6 +158,9 @@ export default function DriverHome() {
   const [showHistory, setShowHistory] = useState(false);
   const [isRestoringState, setIsRestoringState] = useState(true);
   const [historyGrouping, setHistoryGrouping] = useState<"day" | "month" | "year">("day");
+
+  // Coding status
+  const [isCoded, setIsCoded] = useState(false);
 
   // Chat notification states
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
@@ -117,6 +188,23 @@ export default function DriverHome() {
   const lastHeading = useRef<number>(0);
   const isNavigating = useRef<boolean>(false);
   const socketRef = useRef<Socket | null>(null);
+
+  // Check coding status whenever driver data changes
+  useEffect(() => {
+    if (driver?.plateNumber) {
+      const coded = isTricycleCoded(driver.plateNumber);
+      setIsCoded(coded);
+      
+      if (coded) {
+        const codingInfo = getCodingInfo();
+        Alert.alert(
+          '⚠️ Coding Day',
+          `Your tricycle (ending in ${driver.plateNumber.slice(-1)}) is coded today (${codingInfo.dayName}).\n\nCoded digits: ${codingInfo.codingDigits.join(', ')}\n\nYou cannot accept rides today.`,
+          [{ text: 'OK' }]
+        );
+      }
+    }
+  }, [driver?.plateNumber]);
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -568,7 +656,8 @@ export default function DriverHome() {
             id: data.user.id,
             firstname: data.user.firstName,
             lastname: data.user.lastName,
-            todaName: data.user.todaName, 
+            todaName: data.user.todaName,
+            plateNumber: data.user.plateNumber, // Make sure your API returns this
           });
         }
       })
@@ -1010,6 +1099,17 @@ export default function DriverHome() {
       return;
     }
 
+    // Check if tricycle is coded
+    if (isCoded) {
+      const codingInfo = getCodingInfo();
+      Alert.alert(
+        '⚠️ Cannot Accept Ride',
+        `Your tricycle is coded today (${codingInfo.dayName}).\n\nCoded digits: ${codingInfo.codingDigits.join(', ')}\n\nPlate ending: ${driver.plateNumber?.slice(-1)}\n\nYou cannot accept rides on your coding day.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       console.log('🎯 Accepting ride:', ride._id);
       console.log('👤 Driver ID:', driver.id);
@@ -1257,12 +1357,41 @@ export default function DriverHome() {
     setShowHistory(true);
   };
 
+  // Get coding status banner text
+  const getCodingStatusBanner = () => {
+    const codingInfo = getCodingInfo();
+    
+    if (codingInfo.isWeekend) {
+      return {
+        text: `${codingInfo.dayName} - No Coding`,
+        color: '#28a745',
+        icon: '✅'
+      };
+    }
+    
+    if (isCoded) {
+      return {
+        text: `${codingInfo.dayName} - CODED (Digits: ${codingInfo.codingDigits.join(', ')})`,
+        color: '#dc3545',
+        icon: '🚫'
+      };
+    }
+    
+    return {
+      text: `${codingInfo.dayName} - Not Coded (Digits: ${codingInfo.codingDigits.join(', ')})`,
+      color: '#28a745',
+      icon: '✅'
+    };
+  };
+
   const groupedRides = groupRidesByDate(completedRides);
   const sortedDates = Object.keys(groupedRides).sort((a, b) => {
     const dateA = new Date(groupedRides[a][0].completedAt || groupedRides[a][0].createdAt);
     const dateB = new Date(groupedRides[b][0].completedAt || groupedRides[b][0].createdAt);
     return dateB.getTime() - dateA.getTime();
   });
+
+  const codingStatus = getCodingStatusBanner();
 
   return (
     <>
@@ -1324,6 +1453,18 @@ export default function DriverHome() {
             </>
           )}
         </MapView>
+
+        {/* Coding Status Banner */}
+        <View style={[styles.codingBanner, { backgroundColor: codingStatus.color }]}>
+          <Text style={styles.codingBannerText}>
+            {codingStatus.icon} {codingStatus.text}
+          </Text>
+          {driver?.plateNumber && (
+            <Text style={styles.codingBannerPlate}>
+              Plate: {driver.plateNumber}
+            </Text>
+          )}
+        </View>
 
         <TouchableOpacity
           style={styles.recenterButton}
@@ -1429,11 +1570,12 @@ export default function DriverHome() {
 
         {!activeRide && (
           <TouchableOpacity
-            style={styles.showRidesButton}
+            style={[styles.showRidesButton, isCoded && styles.showRidesButtonDisabled]}
             onPress={() => setShowRidesList(true)}
+            disabled={isCoded}
           >
             <Text style={styles.showRidesButtonText}>
-              📋 Available Rides ({pendingRides.length})
+              {isCoded ? '🚫 Coded - Cannot Accept Rides' : `📋 Available Rides (${pendingRides.length})`}
             </Text>
           </TouchableOpacity>
         )}
@@ -1454,6 +1596,14 @@ export default function DriverHome() {
                 </TouchableOpacity>
               </View>
 
+              {isCoded && (
+                <View style={styles.codedWarning}>
+                  <Text style={styles.codedWarningText}>
+                    🚫 Your tricycle is coded today. You cannot accept rides.
+                  </Text>
+                </View>
+              )}
+
               <ScrollView
                 style={styles.ridesList}
                 refreshControl={
@@ -1468,7 +1618,7 @@ export default function DriverHome() {
                   </View>
                 ) : (
                   pendingRides.map((ride) => (
-                    <View key={ride._id} style={styles.rideCard}>
+                    <View key={ride._id} style={[styles.rideCard, isCoded && styles.rideCardDisabled]}>
                       <View style={styles.rideHeader}>
                         <Text style={styles.passengerNameCard}>
                           👤 {ride.firstname} {ride.lastname}
@@ -1502,10 +1652,13 @@ export default function DriverHome() {
 
                       <View style={styles.rideActions}>
                         <TouchableOpacity
-                          style={[styles.actionBtn, styles.acceptBtn]}
+                          style={[styles.actionBtn, styles.acceptBtn, isCoded && styles.actionBtnDisabled]}
                           onPress={() => handleAcceptRide(ride)}
+                          disabled={isCoded}
                         >
-                          <Text style={styles.actionBtnText}>✓ Accept</Text>
+                          <Text style={styles.actionBtnText}>
+                            {isCoded ? '🚫 Coded' : '✓ Accept'}
+                          </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[styles.actionBtn, styles.rejectBtn]}
@@ -1680,6 +1833,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(66, 133, 244, 0.3)',
   },
+  codingBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingTop: 50,
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  codingBannerText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  codingBannerPlate: {
+    color: 'white',
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
+  },
   recenterButton: {
     position: 'absolute',
     bottom: 140,
@@ -1715,7 +1891,7 @@ const styles = StyleSheet.create({
   },
   driverCard: {
     position: "absolute",
-    top: 60,
+    top: 110,
     left: 20,
     backgroundColor: "#fff",
     paddingHorizontal: 20,
@@ -1784,7 +1960,6 @@ const styles = StyleSheet.create({
     color: "#007AFF",
     marginBottom: 12,
   },
-  // Passenger Info Container
   passengerInfoContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1893,6 +2068,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  showRidesButtonDisabled: {
+    backgroundColor: "#dc3545",
+  },
   showRidesButtonText: {
     color: "#fff",
     fontSize: 18,
@@ -1926,6 +2104,21 @@ const styles = StyleSheet.create({
   closeButton: {
     fontSize: 28,
     color: "#999",
+  },
+  codedWarning: {
+    backgroundColor: '#fff3cd',
+    padding: 16,
+    marginHorizontal: 20,
+    marginVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+  },
+  codedWarningText: {
+    color: '#856404',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   groupingControls: {
     flexDirection: "row",
@@ -1980,6 +2173,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#e0e0e0",
+  },
+  rideCardDisabled: {
+    opacity: 0.6,
+    backgroundColor: "#f0f0f0",
   },
   rideHeader: {
     flexDirection: "row",
@@ -2040,6 +2237,9 @@ const styles = StyleSheet.create({
   },
   acceptBtn: {
     backgroundColor: "#28a745",
+  },
+  actionBtnDisabled: {
+    backgroundColor: "#999999",
   },
   rejectBtn: {
     backgroundColor: "#dc3545",

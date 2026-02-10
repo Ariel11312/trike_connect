@@ -326,7 +326,7 @@ export const getMe = async (req, res) => {
         createdAt: user.createdAt,
         ...(user.role === 'driver' && {
           todaName: user.todaName,
-          licensePlate: user.licensePlate,
+          plateNumber: user.licensePlate,
           address: user.address,
           idCardImage: user.idCardImage,
         }),

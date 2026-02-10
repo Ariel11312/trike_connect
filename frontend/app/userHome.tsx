@@ -58,6 +58,7 @@ interface BookingData {
   fare: number;
   routeCoordinates: { latitude: number; longitude: number }[];
   selectedTodaName: string;
+  passengerType: 'regular' | 'senior_pwd';
 }
 
 interface RideHistory {
@@ -68,6 +69,7 @@ interface RideHistory {
   fare: number;
   date: string;
   timestamp: number;
+  passengerType: 'regular' | 'senior_pwd';
 }
 
 // Report reasons
@@ -80,6 +82,56 @@ const REPORT_REASONS = [
   "Driver cancelled without reason",
   "Late arrival",
   "Other",
+];
+
+// FARE MATRIX - Based on the uploaded image
+interface FareMatrixEntry {
+  destination: string;
+  toda: string;
+  regularFare: number;
+  seniorPwdFare: number;
+  bayangFare2Pax: number;
+  bayangFareSM: number;
+  latitude: number;
+  longitude: number;
+}
+
+const FARE_MATRIX: FareMatrixEntry[] = [
+  { destination: "Bayan", toda: "All TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 30.00, latitude: 14.8847, longitude: 120.8572 },
+  { destination: "SM", toda: "All TODA", regularFare: 15.00, seniorPwdFare: 10.00, bayangFare2Pax: 30.00, bayangFareSM: 0, latitude: 14.8889, longitude: 120.8543 },
+  { destination: "Bagong Nayon", toda: "BNBB TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8920, longitude: 120.8590 },
+  { destination: "Barangka", toda: "BPP TODA", regularFare: 20.00, seniorPwdFare: 16.00, bayangFare2Pax: 60.00, bayangFareSM: 60.00, latitude: 14.8950, longitude: 120.8620 },
+  { destination: "Sapang", toda: "BPP TODA", regularFare: 25.00, seniorPwdFare: 20.00, bayangFare2Pax: 75.00, bayangFareSM: 75.00, latitude: 14.9000, longitude: 120.8650 },
+  { destination: "Calantipay", toda: "CALANTIPAY TODA", regularFare: 25.00, seniorPwdFare: 20.00, bayangFare2Pax: 75.00, bayangFareSM: 75.00, latitude: 14.8780, longitude: 120.8500 },
+  { destination: "Catulnan", toda: "PC TODA", regularFare: 25.00, seniorPwdFare: 20.00, bayangFare2Pax: 50.00, bayangFareSM: 45.00, latitude: 14.8700, longitude: 120.8450 },
+  { destination: "Concepcion", toda: "PC TODA", regularFare: 22.50, seniorPwdFare: 18.50, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.8650, longitude: 120.8400 },
+  { destination: "Concepcion Bungahan", toda: "CONCEPCION TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8600, longitude: 120.8350 },
+  { destination: "Concepcion Dulo", toda: "CONCEPCION TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 30.00, latitude: 14.8550, longitude: 120.8300 },
+  { destination: "Hinukay", toda: "HINUKAY TODA", regularFare: 25.00, seniorPwdFare: 20.00, bayangFare2Pax: 75.00, bayangFareSM: 55.00, latitude: 14.9100, longitude: 120.8700 },
+  { destination: "Matagtubig", toda: "MT TODA", regularFare: 27.50, seniorPwdFare: 22.00, bayangFare2Pax: 55.00, bayangFareSM: 55.00, latitude: 14.9150, longitude: 120.8750 },
+  { destination: "Pagala", toda: "PAGALA TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8800, longitude: 120.8520 },
+  { destination: "Piel", toda: "PIEL TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.9050, longitude: 120.8680 },
+  { destination: "Poblacion", toda: "API, BA, LB TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8870, longitude: 120.8560 },
+  { destination: "Sabang", toda: "BB, MA NO. SM, STA ELENA TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 35.00, latitude: 14.8750, longitude: 120.8480 },
+  { destination: "Sabang Dulo", toda: "BB, MA NO. SM, STA ELENA TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 35.00, latitude: 14.8720, longitude: 120.8460 },
+  { destination: "San Roque", toda: "SR TODA", regularFare: 20.00, seniorPwdFare: 16.00, bayangFare2Pax: 40.00, bayangFareSM: 40.00, latitude: 14.8680, longitude: 120.8420 },
+  { destination: "Sta. Babrara", toda: "ASBATODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 30.00, latitude: 14.9200, longitude: 120.8800 },
+  { destination: "San Jose", toda: "SM TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8820, longitude: 120.8540 },
+  { destination: "Tarcan", toda: "SM TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 45.00, latitude: 14.8900, longitude: 120.8580 },
+  { destination: "Tarcan Mulawin Bata", toda: "SM TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.8950, longitude: 120.8600 },
+  { destination: "Tarcan Mulawin Matanda", toda: "SM TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.8980, longitude: 120.8620 },
+  { destination: "Makinabang", toda: "SM TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.9020, longitude: 120.8640 },
+  { destination: "Sto. Cristo", toda: "APO TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 25.00, latitude: 14.8850, longitude: 120.8550 },
+  { destination: "Sto. Niño", toda: "SM TODA", regularFare: 17.50, seniorPwdFare: 14.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.8920, longitude: 120.8570 },
+  { destination: "Subic", toda: "SS, STS TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8780, longitude: 120.8510 },
+  { destination: "Sulivan", toda: "STA TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 45.00, latitude: 14.9080, longitude: 120.8720 },
+  { destination: "Tangos Bungao Citiva", toda: "TPA TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 30.00, latitude: 14.8680, longitude: 120.8440 },
+  { destination: "Tangos Dulo", toda: "TPA TODA", regularFare: 20.00, seniorPwdFare: 16.00, bayangFare2Pax: 40.00, bayangFareSM: 30.00, latitude: 14.8650, longitude: 120.8420 },
+  { destination: "Tigaon", toda: "BTI TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 40.00, latitude: 14.9250, longitude: 120.8850 },
+  { destination: "Tibag", toda: "TC TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8830, longitude: 120.8530 },
+  { destination: "Tilapayong", toda: "TILAPAYONG TODA", regularFare: 22.50, seniorPwdFare: 18.00, bayangFare2Pax: 45.00, bayangFareSM: 40.00, latitude: 14.9300, longitude: 120.8900 },
+  { destination: "VDF", toda: "VDF TODA", regularFare: 12.50, seniorPwdFare: 10.00, bayangFare2Pax: 25.00, bayangFareSM: 30.00, latitude: 14.8860, longitude: 120.8545 },
+  { destination: "VDF Northville", toda: "VDF TODA", regularFare: 15.00, seniorPwdFare: 12.00, bayangFare2Pax: 30.00, bayangFareSM: 30.00, latitude: 14.8880, longitude: 120.8555 },
 ];
 
 export default function UserHome() {
@@ -100,6 +152,7 @@ export default function UserHome() {
   const [selectedTodaName, setSelectedTodaName] = useState("");
   const [todaNames, setTodaNames] = useState<string[]>([]);
   const [assignedDriver, setAssignedDriver] = useState<Driver | null>(null);
+  const [passengerType, setPassengerType] = useState<'regular' | 'senior_pwd'>('regular');
 
   // Report Driver states
   const [showReportModal, setShowReportModal] = useState(false);
@@ -120,57 +173,124 @@ export default function UserHome() {
   // Search states
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
-  const [searchResults, setSearchResults] = useState<LocationData[]>([]);
+  const [searchResults, setSearchResults] = useState<FareMatrixEntry[]>([]);
 
   // Route line coordinates
   const [routeCoordinates, setRouteCoordinates] = useState<
     { latitude: number; longitude: number }[]
   >([]);
 
-  // Sample popular locations
-  const popularLocations: LocationData[] = [
-    { name: "SM City Clark", latitude: 15.1775, longitude: 120.5886 },
-    { name: "Clark Freeport Zone", latitude: 15.1855, longitude: 120.5602 },
-    { name: "Angeles City Hall", latitude: 15.1450, longitude: 120.5889 },
-    { name: "Marquee Mall", latitude: 15.1608, longitude: 120.5936 },
-    { name: "Nepo Mall", latitude: 15.1531, longitude: 120.5864 },
-    { name: "Clark International Airport", latitude: 15.1859, longitude: 120.5603 },
-    { name: "Balibago", latitude: 15.1598, longitude: 120.5897 },
-    { name: "Fields Avenue", latitude: 15.1615, longitude: 120.5912 },
-    { name: "Plaridel", latitude: 14.8847, longitude: 120.8572 },
-    { name: "WalterMart Plaridel", latitude: 14.8889, longitude: 120.8543 },
-    { name: "Primark Center Plaridel", latitude: 14.8901, longitude: 120.8561 },
-    { name: "Robinsons Place Angeles", latitude: 15.1519, longitude: 120.5851 },
-    { name: "SM Pampanga", latitude: 15.0794, longitude: 120.6200 },
-  ];
-
-  const FARE_PER_KM = 20;
-
-  // Fetch available TODA names on mount
+  // Get unique TODA names from fare matrix
   useEffect(() => {
-    fetchTodaNames();
+    const uniqueTodas = Array.from(new Set(FARE_MATRIX.map(entry => entry.toda)));
+    setTodaNames(uniqueTodas);
   }, []);
 
-  const fetchTodaNames = async () => {
-    try {
-      const res = await fetch('http://192.168.100.37:5000/api/rides/toda-names', {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+  // Function to check if address is in Baliuag/Baliwag
+  const isInBaliuag = (addressName: string): boolean => {
+    const address = addressName.toLowerCase();
+    return address.includes('baliuag') || address.includes('baliwag') || address.includes('bulacan');
+  };
 
-      const data = await res.json();
-      if (data.success && data.todaNames) {
-        setTodaNames(data.todaNames);
-        console.log('✅ Loaded TODA names:', data.todaNames);
+  // Function to find matching destination in fare matrix from address
+  const findDestinationFromAddress = (addressName: string): FareMatrixEntry | null => {
+    const address = addressName.toLowerCase();
+    
+    // Try to find exact match
+    for (const entry of FARE_MATRIX) {
+      if (address.includes(entry.destination.toLowerCase())) {
+        return entry;
       }
-    } catch (error) {
-      console.error('❌ Error fetching TODA names:', error);
-      // Fallback TODA names
-      setTodaNames(['TODA 1', 'TODA 2', 'TODA 3', 'TODA 4', 'TODA 5']);
     }
+    
+    return null;
+  };
+
+  // Function to calculate fare based on destination and passenger type
+  const calculateFareFromMatrix = (
+    pickupAddress: string,
+    dropoffAddress: string,
+    pickupLocation: LocationData | null,
+    dropoffLocation: LocationData | null,
+    toda: string,
+    passType: 'regular' | 'senior_pwd'
+  ): { fare: number; calculationType: 'matrix' | 'distance' | 'cross-location' } => {
+    // Check if pickup location is in Baliuag
+    if (!isInBaliuag(pickupAddress)) {
+      return { fare: 0, calculationType: 'matrix' };
+    }
+
+    // Find if pickup address matches a matrix destination
+    const pickupDestination = findDestinationFromAddress(pickupAddress);
+    const dropoffDestination = findDestinationFromAddress(dropoffAddress);
+
+    // Case 1: Both pickup and dropoff are in the fare matrix
+    // Example: Pickup is "Piel" and dropoff is "SM"
+    if (pickupDestination && dropoffDestination && pickupLocation && dropoffLocation) {
+      // Calculate distance between the two matrix locations
+      const distanceKm = calculateDistance(
+        pickupDestination.latitude,
+        pickupDestination.longitude,
+        dropoffDestination.latitude,
+        dropoffDestination.longitude
+      );
+
+      // Get the base fare for the dropoff destination
+      const dropoffEntry = FARE_MATRIX.find(e => 
+        e.destination.toLowerCase() === dropoffDestination.destination.toLowerCase() &&
+        (e.toda === toda || e.toda === "All TODA")
+      );
+
+      if (dropoffEntry) {
+        const baseFare = passType === 'senior_pwd' ? dropoffEntry.seniorPwdFare : dropoffEntry.regularFare;
+        
+        // If distance is significant (> 2km), calculate proportional fare
+        if (distanceKm > 2) {
+          // Use ₱15/km as base rate for cross-location trips
+          const calculatedFare = Math.ceil(distanceKm * 15);
+          // Apply senior/PWD discount (20% off)
+          const finalFare = passType === 'senior_pwd' ? Math.ceil(calculatedFare * 0.8) : calculatedFare;
+          return { fare: finalFare, calculationType: 'cross-location' };
+        } else {
+          // Use matrix fare for short distances
+          return { fare: baseFare, calculationType: 'matrix' };
+        }
+      }
+    }
+
+    // Case 2: Only dropoff is in the matrix (pickup is somewhere else in Baliuag)
+    if (dropoffDestination) {
+      const entry = FARE_MATRIX.find(e => 
+        e.destination.toLowerCase() === dropoffDestination.destination.toLowerCase() &&
+        (e.toda === toda || e.toda === "All TODA")
+      );
+
+      if (entry) {
+        return { 
+          fare: passType === 'senior_pwd' ? entry.seniorPwdFare : entry.regularFare,
+          calculationType: 'matrix'
+        };
+      }
+    }
+
+    // Case 3: Neither location is in matrix, use distance-based calculation
+    if (pickupLocation && dropoffLocation) {
+      const distanceKm = calculateDistance(
+        pickupLocation.latitude,
+        pickupLocation.longitude,
+        dropoffLocation.latitude,
+        dropoffLocation.longitude
+      );
+
+      // Use ₱15/km as base rate
+      const calculatedFare = Math.ceil(distanceKm * 15);
+      // Apply senior/PWD discount (20% off)
+      const finalFare = passType === 'senior_pwd' ? Math.ceil(calculatedFare * 0.8) : calculatedFare;
+      return { fare: finalFare, calculationType: 'distance' };
+    }
+
+    // Fallback
+    return { fare: 0, calculationType: 'matrix' };
   };
 
   // Restore persisted state on app launch
@@ -192,12 +312,10 @@ export default function UserHome() {
       if (savedRide && savedWaiting === 'true') {
         const ride = JSON.parse(savedRide);
         console.log('✅ Restored current ride:', ride._id);
-        console.log('📋 Full ride object:', JSON.stringify(ride, null, 2));
 
         setCurrentRide(ride);
         setIsWaitingForDriver(true);
 
-        // Restore booking data if available
         if (savedBooking) {
           const bookingData: BookingData = JSON.parse(savedBooking);
           console.log('✅ Restored booking data');
@@ -210,27 +328,19 @@ export default function UserHome() {
           setFare(bookingData.fare);
           setRouteCoordinates(bookingData.routeCoordinates);
           setSelectedTodaName(bookingData.selectedTodaName || "");
+          setPassengerType(bookingData.passengerType || 'regular');
 
-          // Update map to show the route
           if (bookingData.currentLocation && bookingData.dropoffMarker) {
             fitMapToMarkers(bookingData.currentLocation, bookingData.dropoffMarker);
           }
         }
 
-        // Check for driver ID in multiple possible locations
         const driverId = ride.driver || ride.driverId || ride.acceptedBy;
 
-        // Fetch driver info if ride has been accepted
         if (driverId) {
           console.log('🚗 Ride has driver, fetching info for:', driverId);
           fetchDriverInfo(driverId);
-        } else {
-          console.log('ℹ️ No driver assigned yet, status:', ride.status);
         }
-
-        console.log('🔄 Ride restored - checking status...');
-      } else {
-        console.log('ℹ️ No persisted ride state found');
       }
     } catch (error) {
       console.error('❌ Error restoring state:', error);
@@ -241,9 +351,7 @@ export default function UserHome() {
 
   const fetchDriverInfo = async (driverIdOrObject: any) => {
     try {
-      // Check if driver is already a populated object
       if (typeof driverIdOrObject === 'object' && driverIdOrObject !== null) {
-        console.log('✅ Driver is already populated object:', driverIdOrObject);
         const driverData = {
           _id: driverIdOrObject._id || driverIdOrObject.id,
           firstName: driverIdOrObject.firstName,
@@ -253,12 +361,9 @@ export default function UserHome() {
           licensePlate: driverIdOrObject.licensePlate || '',
         };
         setAssignedDriver(driverData);
-        console.log('✅ Set driver info from object:', driverData.firstName, driverData.lastName);
         return;
       }
 
-      // If it's just an ID string, fetch from API
-      console.log('🔄 Fetching driver info for ID:', driverIdOrObject);
       const res = await fetch(`http://192.168.100.37:5000/api/auth/user/${driverIdOrObject}`, {
         method: 'GET',
         credentials: 'include',
@@ -278,7 +383,6 @@ export default function UserHome() {
           licensePlate: data.user.licensePlate || '',
         };
         setAssignedDriver(driverData);
-        console.log('✅ Loaded driver info from API:', data.user.firstName, data.user.lastName);
       }
     } catch (error) {
       console.error('❌ Error fetching driver info:', error);
@@ -292,14 +396,13 @@ export default function UserHome() {
         const history: RideHistory[] = JSON.parse(historyData);
         history.sort((a, b) => b.timestamp - a.timestamp);
         setRideHistory(history);
-        console.log('✅ Loaded ride history:', history.length, 'rides');
       }
     } catch (error) {
       console.error('❌ Error loading ride history:', error);
     }
   };
 
-  const saveToHistory = async (pickup: LocationData, dropoff: LocationData, dist: number, cost: number) => {
+  const saveToHistory = async (pickup: LocationData, dropoff: LocationData, dist: number, cost: number, passType: 'regular' | 'senior_pwd') => {
     try {
       const newEntry: RideHistory = {
         id: Date.now().toString(),
@@ -309,6 +412,7 @@ export default function UserHome() {
         fare: cost,
         date: new Date().toISOString(),
         timestamp: Date.now(),
+        passengerType: passType,
       };
 
       const updatedHistory = [newEntry, ...rideHistory];
@@ -316,7 +420,6 @@ export default function UserHome() {
 
       await AsyncStorage.setItem(STORAGE_KEYS.RIDE_HISTORY, JSON.stringify(trimmedHistory));
       setRideHistory(trimmedHistory);
-      console.log('✅ Saved ride to history');
     } catch (error) {
       console.error('❌ Error saving to history:', error);
     }
@@ -362,6 +465,7 @@ export default function UserHome() {
 
     setDropoffMarker(historyItem.dropoffLocation);
     setDropoffLocation(historyItem.dropoffLocation.name);
+    setPassengerType(historyItem.passengerType);
     setShowHistoryModal(false);
     Keyboard.dismiss();
 
@@ -375,15 +479,13 @@ export default function UserHome() {
     }
   };
 
-  // Persist ride state whenever it changes
+  // Persist ride state
   useEffect(() => {
     if (isRestoringState) return;
 
     const persistState = async () => {
       try {
         if (currentRide && isWaitingForDriver) {
-          console.log('💾 Persisting ride state...');
-
           const bookingData: BookingData = {
             pickupLocation,
             dropoffLocation,
@@ -393,6 +495,7 @@ export default function UserHome() {
             fare,
             routeCoordinates,
             selectedTodaName,
+            passengerType,
           };
 
           await Promise.all([
@@ -400,15 +503,12 @@ export default function UserHome() {
             AsyncStorage.setItem(STORAGE_KEYS.IS_WAITING, 'true'),
             AsyncStorage.setItem(STORAGE_KEYS.BOOKING_DATA, JSON.stringify(bookingData)),
           ]);
-          console.log('✅ Ride state persisted');
         } else {
-          console.log('🗑️ Clearing persisted ride state...');
           await Promise.all([
             AsyncStorage.removeItem(STORAGE_KEYS.CURRENT_RIDE),
             AsyncStorage.removeItem(STORAGE_KEYS.IS_WAITING),
             AsyncStorage.removeItem(STORAGE_KEYS.BOOKING_DATA),
           ]);
-          console.log('✅ Ride state cleared');
         }
       } catch (error) {
         console.error('❌ Error persisting state:', error);
@@ -416,7 +516,7 @@ export default function UserHome() {
     };
 
     persistState();
-  }, [currentRide, isWaitingForDriver, pickupLocation, dropoffLocation, distance, fare, selectedTodaName, isRestoringState]);
+  }, [currentRide, isWaitingForDriver, pickupLocation, dropoffLocation, distance, fare, selectedTodaName, passengerType, isRestoringState]);
 
   useEffect(() => {
     fetch('http://192.168.100.37:5000/api/auth/me', {
@@ -428,15 +528,12 @@ export default function UserHome() {
     })
       .then(res => res.json())
       .then(data => {
-        console.log('User data received:', data);
         if (data.success && data.user) {
           setUser({
             id: data.user.id,
             firstname: data.user.firstName,
             lastname: data.user.lastName,
           });
-        } else {
-          console.error('Invalid response format:', data);
         }
       })
       .catch(error => console.error('Error fetching user:', error));
@@ -467,33 +564,16 @@ export default function UserHome() {
         if (data.success && data.ride) {
           const rideStatus = data.ride.status;
           const previousStatus = currentRide.status;
-
-          // Check for driver ID in multiple possible locations
           const driverId = data.ride.driver || data.ride.driverId || data.ride.acceptedBy;
 
-          console.log('📊 Ride status check:', {
-            rideId: data.ride._id,
-            status: rideStatus,
-            previousStatus,
-            hasDriver: !!driverId,
-            driverId: driverId,
-            currentAssignedDriver: !!assignedDriver,
-            fullRideObject: data.ride
-          });
-
-          // Update current ride with latest data
           setCurrentRide(data.ride);
 
           if (rideStatus === 'accepted') {
-            // Check if this is a new acceptance (status changed from pending to accepted)
             const isNewAcceptance = previousStatus !== 'accepted' && !assignedDriver;
 
-            // Always fetch driver info if we don't have it yet and we have a driver ID
             if (!assignedDriver && driverId) {
-              console.log('🚗 Fetching driver info for:', driverId);
               await fetchDriverInfo(driverId);
 
-              // Show alert only once when status changes to accepted
               if (isNewAcceptance) {
                 Alert.alert(
                   '🎉 Ride Accepted!',
@@ -501,8 +581,6 @@ export default function UserHome() {
                   [{ text: 'OK' }]
                 );
               }
-            } else if (!driverId) {
-              console.warn('⚠️ Ride is accepted but no driver ID found in response');
             }
           } else if (rideStatus === 'completed') {
             setIsWaitingForDriver(false);
@@ -530,8 +608,6 @@ export default function UserHome() {
     };
 
     const interval = setInterval(checkRideStatus, 3000);
-
-    // Run immediately on mount to check current status
     checkRideStatus();
 
     return () => clearInterval(interval);
@@ -539,7 +615,6 @@ export default function UserHome() {
 
   const getCurrentLocation = async () => {
     if (currentLocation) {
-      console.log('ℹ️ Using restored location');
       return;
     }
 
@@ -567,6 +642,20 @@ export default function UserHome() {
         latitude,
         longitude,
       };
+
+      // Check if location is in Baliuag/Baliwag coverage area
+      if (!isInBaliuag(addressText)) {
+        Alert.alert(
+          "⚠️ Outside Coverage Area",
+          `Your current location (${addressText}) is outside Baliuag/Baliwag. This service only operates within Baliuag/Baliwag, Bulacan.`,
+          [
+            {
+              text: "OK",
+              style: "cancel"
+            }
+          ]
+        );
+      }
 
       setCurrentLocation(currentLoc);
       setPickupLocation(addressText);
@@ -618,8 +707,8 @@ export default function UserHome() {
     }
 
     if (query.trim().length > 0) {
-      const filtered = popularLocations.filter((location) =>
-        location.name.toLowerCase().includes(query.toLowerCase())
+      const filtered = FARE_MATRIX.filter((entry) =>
+        entry.destination.toLowerCase().includes(query.toLowerCase())
       );
 
       setSearchResults(filtered);
@@ -627,64 +716,52 @@ export default function UserHome() {
     }
   };
 
-  const searchLocationByAddress = async (address: string) => {
+  const handleSelectSearchResult = (location: FareMatrixEntry) => {
     if (isWaitingForDriver || currentRide) {
       Alert.alert("Ongoing Ride", "Please complete or cancel your current ride before booking a new one.");
       return;
     }
 
-    if (!address || address.trim().length === 0) return;
+    const dropoffLoc: LocationData = {
+      name: location.destination,
+      latitude: location.latitude,
+      longitude: location.longitude,
+    };
 
-    try {
-      const geocoded = await Location.geocodeAsync(address);
-
-      if (geocoded && geocoded.length > 0) {
-        const { latitude, longitude } = geocoded[0];
-
-        const dropoffLoc: LocationData = {
-          name: address,
-          latitude,
-          longitude,
-        };
-
-        setDropoffMarker(dropoffLoc);
-        setDropoffLocation(address);
-        setSearchQuery("");
-        setShowSearchResults(false);
-        Keyboard.dismiss();
-
-        if (currentLocation) {
-          getDirections(currentLocation, dropoffLoc);
-          fitMapToMarkers(currentLocation, dropoffLoc);
-        }
-
-        if (!showBookingForm) {
-          setShowBookingForm(true);
-        }
-      } else {
-        Alert.alert("Location Not Found", "Please try a different search or tap on the map");
-      }
-    } catch (error) {
-      console.error("Geocoding error:", error);
-      Alert.alert("Error", "Unable to find location. Please try again or tap on the map.");
-    }
-  };
-
-  const handleSelectSearchResult = (location: LocationData) => {
-    if (isWaitingForDriver || currentRide) {
-      Alert.alert("Ongoing Ride", "Please complete or cancel your current ride before booking a new one.");
-      return;
-    }
-
-    setDropoffMarker(location);
-    setDropoffLocation(location.name);
+    setDropoffMarker(dropoffLoc);
+    setDropoffLocation(location.destination);
     setSearchQuery("");
     setShowSearchResults(false);
     Keyboard.dismiss();
 
     if (currentLocation) {
-      getDirections(currentLocation, location);
-      fitMapToMarkers(currentLocation, location);
+      // Calculate fare based on both pickup and dropoff locations
+      if (selectedTodaName) {
+        const { fare: calculatedFare, calculationType } = calculateFareFromMatrix(
+          pickupLocation,
+          location.destination,
+          currentLocation,
+          dropoffLoc,
+          selectedTodaName,
+          passengerType
+        );
+        
+        if (calculatedFare > 0) {
+          setFare(calculatedFare);
+          
+          // Show info about calculation type
+          if (calculationType === 'cross-location') {
+            console.log(`💰 Fare calculated based on distance between ${pickupLocation} and ${location.destination}`);
+          } else if (calculationType === 'distance') {
+            console.log('💰 Fare calculated based on distance (locations not in matrix)');
+          } else {
+            console.log('💰 Fare from matrix');
+          }
+        }
+      }
+
+      getDirections(currentLocation, dropoffLoc);
+      fitMapToMarkers(currentLocation, dropoffLoc);
     }
 
     if (!showBookingForm) {
@@ -710,6 +787,16 @@ export default function UserHome() {
         ? `${address[0].street || ""}, ${address[0].city || ""}, ${address[0].region || ""}`.trim()
         : `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
 
+      // Validate that location is in Baliuag
+      if (!isInBaliuag(addressText)) {
+        Alert.alert(
+          "⚠️ Outside Coverage Area",
+          `The selected location (${addressText}) is outside Baliuag/Baliwag. Please select a location within Baliuag/Baliwag, Bulacan.`,
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
       const dropoffLoc: LocationData = {
         name: addressText,
         latitude,
@@ -722,6 +809,21 @@ export default function UserHome() {
       if (currentLocation) {
         getDirections(currentLocation, dropoffLoc);
         fitMapToMarkers(currentLocation, dropoffLoc);
+        
+        // Calculate fare based on locations
+        if (selectedTodaName) {
+          const { fare: calculatedFare } = calculateFareFromMatrix(
+            pickupLocation,
+            addressText,
+            currentLocation,
+            dropoffLoc,
+            selectedTodaName,
+            passengerType
+          );
+          if (calculatedFare > 0) {
+            setFare(calculatedFare);
+          }
+        }
       }
 
       if (!showBookingForm) {
@@ -729,13 +831,6 @@ export default function UserHome() {
       }
     } catch (error) {
       console.error("Error reverse geocoding:", error);
-      const dropoffLoc: LocationData = {
-        name: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
-        latitude,
-        longitude,
-      };
-      setDropoffMarker(dropoffLoc);
-      setDropoffLocation(dropoffLoc.name);
     }
   };
 
@@ -760,12 +855,8 @@ export default function UserHome() {
     try {
       const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
 
-      console.log('Fetching route from:', url);
-
       const response = await fetch(url);
       const data = await response.json();
-
-      console.log('OSRM Response:', data);
 
       if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
         const route = data.routes[0];
@@ -776,15 +867,11 @@ export default function UserHome() {
           longitude: coord[0],
         }));
 
-        console.log('Route points:', points.length);
         setRouteCoordinates(points);
 
         const distanceInKm = route.distance / 1000;
         setDistance(Math.round(distanceInKm * 100) / 100);
-        setFare(Math.ceil(distanceInKm * FARE_PER_KM));
-        console.log('Distance:', distanceInKm, 'km');
       } else {
-        console.warn('OSRM returned no routes, using fallback');
         const dist = calculateDistance(
           origin.latitude,
           origin.longitude,
@@ -792,7 +879,6 @@ export default function UserHome() {
           destination.longitude
         );
         setDistance(dist);
-        setFare(Math.ceil(dist * FARE_PER_KM));
         setRouteCoordinates([
           { latitude: origin.latitude, longitude: origin.longitude },
           { latitude: destination.latitude, longitude: destination.longitude }
@@ -807,13 +893,29 @@ export default function UserHome() {
         destination.longitude
       );
       setDistance(dist);
-      setFare(Math.ceil(dist * FARE_PER_KM));
       setRouteCoordinates([
         { latitude: origin.latitude, longitude: origin.longitude },
         { latitude: destination.latitude, longitude: destination.longitude }
       ]);
     }
   };
+
+  // Update fare when TODA or passenger type changes
+  useEffect(() => {
+    if (dropoffLocation && selectedTodaName && currentLocation && dropoffMarker) {
+      const { fare: calculatedFare } = calculateFareFromMatrix(
+        pickupLocation,
+        dropoffLocation,
+        currentLocation,
+        dropoffMarker,
+        selectedTodaName,
+        passengerType
+      );
+      if (calculatedFare > 0) {
+        setFare(calculatedFare);
+      }
+    }
+  }, [selectedTodaName, passengerType, dropoffLocation]);
 
   const showModal = (type: "success" | "error", message: string) => {
     setModalType(type);
@@ -833,12 +935,25 @@ export default function UserHome() {
       setRouteCoordinates([]);
       setShowBookingForm(false);
       setSelectedTodaName("");
+      setPassengerType('regular');
     }
   };
 
   const handleBookRide = async () => {
     if (!pickupLocation || !dropoffLocation) {
-      showModal("error", "Please select a dropoff location by tapping on the map");
+      showModal("error", "Please select a dropoff location");
+      return;
+    }
+
+    // Validate pickup location is in Baliuag
+    if (!isInBaliuag(pickupLocation)) {
+      showModal("error", "⚠️ Your pickup location is outside Baliuag/Baliwag coverage area. This service only operates within Baliuag/Baliwag, Bulacan.");
+      return;
+    }
+
+    // Validate dropoff location is in Baliuag
+    if (!isInBaliuag(dropoffLocation)) {
+      showModal("error", "⚠️ Your dropoff location is outside Baliuag/Baliwag coverage area. Please select a destination within Baliuag/Baliwag, Bulacan.");
       return;
     }
 
@@ -852,8 +967,8 @@ export default function UserHome() {
       return;
     }
 
-    if (distance === 0) {
-      showModal("error", "Unable to calculate distance. Please try again.");
+    if (fare === 0) {
+      showModal("error", "Unable to calculate fare. Please try again.");
       return;
     }
 
@@ -886,13 +1001,14 @@ export default function UserHome() {
           distance,
           fare,
           todaName: selectedTodaName,
+          passengerType,
         }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
-        await saveToHistory(currentLocation, dropoffMarker, distance, fare);
+        await saveToHistory(currentLocation, dropoffMarker, distance, fare, passengerType);
 
         setCurrentRide(data.ride);
         setIsWaitingForDriver(true);
@@ -929,6 +1045,7 @@ export default function UserHome() {
         setShowSearchResults(false);
         setRouteCoordinates([]);
         setSelectedTodaName("");
+        setPassengerType('regular');
         Alert.alert('Ride Cancelled', 'Your ride has been cancelled successfully.');
       }
     } catch (error) {
@@ -943,64 +1060,49 @@ export default function UserHome() {
     }
   };
 
-const handleMessageDriver = async () => {
-  if (!assignedDriver || !user) {
-    Alert.alert("Error", "Unable to start chat. Driver or user information missing.");
-    return;
-  }
-
-  try {
-    console.log('🔄 Creating/opening chat with driver...');
-    console.log('Current User ID:', user.id);
-    console.log('Driver ID:', assignedDriver._id);
-
-    const otherUserId = assignedDriver._id;
-
-    // Create or get existing chat with the driver
-    const response = await fetch('http://192.168.100.37:5000/api/chat/create-new-chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // Add authorization header if needed
-        // 'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        members: [user.id, otherUserId] // ✅ FIXED: Send members array with both user IDs
-      })
-    });
-
-    // Check if response is ok
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Server error:', errorText);
-      throw new Error(`HTTP error! status: ${response.status}`);
+  const handleMessageDriver = async () => {
+    if (!assignedDriver || !user) {
+      Alert.alert("Error", "Unable to start chat. Driver or user information missing.");
+      return;
     }
 
-    // Parse JSON response
-    const responseData = await response.json();
+    try {
+      const otherUserId = assignedDriver._id;
 
-    if (responseData.success) {
-      console.log('✅ Chat created/retrieved:', responseData.data._id);
-
-      // Navigate to chat interface
-      router.push({
-        pathname: '/chat',
-        params: {
-          chatId: responseData.data._id, // ✅ FIXED: Use correct path
-          driverName: `${assignedDriver.firstName} ${assignedDriver.lastName}`,
-          otherUserId: otherUserId,
-        }
+      const response = await fetch('http://192.168.100.37:5000/api/chat/create-new-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          members: [user.id, otherUserId]
+        })
       });
-    } else {
-      console.error('❌ Failed to create chat:', responseData);
-      Alert.alert("Error", responseData.message || "Failed to start chat. Please try again.");
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseData = await response.json();
+
+      if (responseData.success) {
+        router.push({
+          pathname: '/chat',
+          params: {
+            chatId: responseData.data._id,
+            driverName: `${assignedDriver.firstName} ${assignedDriver.lastName}`,
+            otherUserId: otherUserId,
+          }
+        });
+      } else {
+        Alert.alert("Error", responseData.message || "Failed to start chat. Please try again.");
+      }
+    } catch (error) {
+      console.error('❌ Error creating chat:', error);
+      Alert.alert("Error", "Unable to start chat. Please check your connection.");
     }
-  } catch (error) {
-    console.error('❌ Error creating chat:', error);
-    Alert.alert("Error", "Unable to start chat. Please check your connection.");
-  }
-};
-  // Report Driver Functions
+  };
+
   const handleOpenReportModal = () => {
     setShowReportModal(true);
     setSelectedReportReason("");
@@ -1172,7 +1274,6 @@ const handleMessageDriver = async () => {
                 </Text>
               </View>
 
-              {/* Action Buttons - Message and Call */}
               <View style={styles.driverActionButtons}>
                 <TouchableOpacity
                   style={styles.messageButton}
@@ -1194,7 +1295,6 @@ const handleMessageDriver = async () => {
               Your driver is on the way!
             </Text>
 
-            {/* Action Buttons Row */}
             <View style={styles.actionButtonsRow}>
               <TouchableOpacity
                 style={styles.reportButton}
@@ -1263,6 +1363,45 @@ const handleMessageDriver = async () => {
                     📍 Search for a location OR tap anywhere on the map
                   </Text>
 
+                  {/* Passenger Type Selection */}
+                  <View style={styles.inputContainer}>
+                    <View style={styles.iconRow}>
+                      <Text style={styles.icon}>👤</Text>
+                      <Text style={styles.label}>Passenger Type</Text>
+                    </View>
+                    <View style={styles.passengerTypeContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.passengerTypeButton,
+                          passengerType === 'regular' && styles.passengerTypeButtonActive
+                        ]}
+                        onPress={() => setPassengerType('regular')}
+                      >
+                        <Text style={[
+                          styles.passengerTypeText,
+                          passengerType === 'regular' && styles.passengerTypeTextActive
+                        ]}>
+                          Regular
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.passengerTypeButton,
+                          passengerType === 'senior_pwd' && styles.passengerTypeButtonActive
+                        ]}
+                        onPress={() => setPassengerType('senior_pwd')}
+                      >
+                        <Text style={[
+                          styles.passengerTypeText,
+                          passengerType === 'senior_pwd' && styles.passengerTypeTextActive
+                        ]}>
+                          Senior Citizen / PWD
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
                   {/* TODA Selection */}
                   <View style={styles.inputContainer}>
                     <View style={styles.iconRow}>
@@ -1296,7 +1435,7 @@ const handleMessageDriver = async () => {
                     </View>
                   </View>
 
-                  {/* Dropoff Location (Search or Tap) */}
+                  {/* Dropoff Location (Search) */}
                   <View style={styles.inputContainer}>
                     <View style={styles.iconRow}>
                       <Text style={styles.icon}>🔴</Text>
@@ -1305,7 +1444,7 @@ const handleMessageDriver = async () => {
 
                     <TextInput
                       style={styles.input}
-                      placeholder="Type address or location name..."
+                      placeholder="Search destination..."
                       value={searchQuery || dropoffLocation}
                       onChangeText={(text) => {
                         if (text.length > 0) {
@@ -1321,12 +1460,6 @@ const handleMessageDriver = async () => {
                           setRouteCoordinates([]);
                         }
                       }}
-                      onSubmitEditing={() => {
-                        if (searchQuery) {
-                          searchLocationByAddress(searchQuery);
-                        }
-                      }}
-                      returnKeyType="search"
                       onFocus={() => {
                         if (searchQuery.length > 0) {
                           setShowSearchResults(true);
@@ -1348,7 +1481,10 @@ const handleMessageDriver = async () => {
                               onPress={() => handleSelectSearchResult(location)}
                             >
                               <Text style={styles.searchIcon}>📍</Text>
-                              <Text style={styles.searchItemText}>{location.name}</Text>
+                              <View style={styles.searchItemContent}>
+                                <Text style={styles.searchItemText}>{location.destination}</Text>
+                                <Text style={styles.searchItemSubtext}>{location.toda}</Text>
+                              </View>
                             </TouchableOpacity>
                           ))}
                         </ScrollView>
@@ -1361,13 +1497,13 @@ const handleMessageDriver = async () => {
                     <View style={styles.popularContainer}>
                       <Text style={styles.popularTitle}>Popular Destinations:</Text>
                       <View style={styles.chipContainer}>
-                        {popularLocations.slice(0, 6).map((location, index) => (
+                        {FARE_MATRIX.slice(0, 12).map((location, index) => (
                           <TouchableOpacity
                             key={index}
                             style={styles.chip}
                             onPress={() => handleSelectSearchResult(location)}
                           >
-                            <Text style={styles.chipText}>{location.name}</Text>
+                            <Text style={styles.chipText}>{location.destination}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
@@ -1375,7 +1511,7 @@ const handleMessageDriver = async () => {
                   )}
 
                   {/* Distance and Fare */}
-                  {distance > 0 && (
+                  {distance > 0 && fare > 0 && (
                     <View style={styles.fareContainer}>
                       <View style={styles.fareRow}>
                         <Text style={styles.fareLabel}>Distance</Text>
@@ -1383,20 +1519,24 @@ const handleMessageDriver = async () => {
                       </View>
 
                       <View style={styles.fareRow}>
-                        <Text style={styles.fareLabel}>Rate</Text>
-                        <Text style={styles.fareValue}>₱{FARE_PER_KM}/km</Text>
+                        <Text style={styles.fareLabel}>Passenger Type</Text>
+                        <Text style={styles.fareValue}>
+                          {passengerType === 'senior_pwd' ? 'Senior/PWD' : 'Regular'}
+                        </Text>
                       </View>
 
                       <View style={styles.divider} />
 
                       <View style={styles.fareRow}>
                         <Text style={styles.totalLabel}>Total Fare</Text>
-                        <Text style={styles.totalValue}>₱{fare}</Text>
+                        <Text style={styles.totalValue}>₱{fare.toFixed(2)}</Text>
                       </View>
 
-                      <Text style={styles.calculation}>
-                        {distance} km × ₱{FARE_PER_KM} = ₱{fare}
-                      </Text>
+                      {passengerType === 'senior_pwd' && (
+                        <Text style={styles.discountNotice}>
+                          ✨ Discounted fare applied for Senior Citizen/PWD
+                        </Text>
+                      )}
                     </View>
                   )}
 
@@ -1540,7 +1680,12 @@ const handleMessageDriver = async () => {
                                 minute: '2-digit'
                               })}
                             </Text>
-                            <Text style={styles.historyFare}>₱{ride.fare}</Text>
+                            <View style={styles.historyFareContainer}>
+                              <Text style={styles.historyFare}>₱{ride.fare.toFixed(2)}</Text>
+                              {ride.passengerType === 'senior_pwd' && (
+                                <Text style={styles.historyPassengerBadge}>PWD/Senior</Text>
+                              )}
+                            </View>
                           </View>
                           <View style={styles.historyLocations}>
                             <View style={styles.historyLocationRow}>
@@ -1710,7 +1855,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-  // Driver Card Styles
   driverCard: {
     position: "absolute",
     bottom: 40,
@@ -1742,7 +1886,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#28a745",
   },
-  // Waiting Card Styles
   waitingCard: {
     position: "absolute",
     bottom: 40,
@@ -1845,7 +1988,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 16,
   },
-  // Action Buttons Row (Report + Cancel)
   actionButtonsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1874,7 +2016,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  // Report Modal Styles
   reportModalContent: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 24,
@@ -2080,6 +2221,33 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#666",
   },
+  passengerTypeContainer: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  passengerTypeButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "#e0e0e0",
+    backgroundColor: "#fff",
+    alignItems: "center",
+  },
+  passengerTypeButtonActive: {
+    borderColor: "#007AFF",
+    backgroundColor: "#e7f3ff",
+  },
+  passengerTypeText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    textAlign: "center",
+  },
+  passengerTypeTextActive: {
+    color: "#007AFF",
+  },
   pickerContainer: {
     borderWidth: 1,
     borderColor: "#e0e0e0",
@@ -2119,7 +2287,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e0e0e0",
     borderRadius: 12,
-    maxHeight: 150,
+    maxHeight: 200,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -2127,7 +2295,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   searchScroll: {
-    maxHeight: 150,
+    maxHeight: 200,
   },
   searchItem: {
     flexDirection: "row",
@@ -2140,10 +2308,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginRight: 12,
   },
+  searchItemContent: {
+    flex: 1,
+  },
   searchItemText: {
     fontSize: 16,
     color: "#333",
-    flex: 1,
+    fontWeight: "600",
+  },
+  searchItemSubtext: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
   },
   popularContainer: {
     marginBottom: 20,
@@ -2210,11 +2386,12 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#007AFF",
   },
-  calculation: {
+  discountNotice: {
     fontSize: 12,
-    color: "#999",
+    color: "#28a745",
     textAlign: "center",
-    marginTop: 4,
+    marginTop: 8,
+    fontWeight: "600",
   },
   bookButton: {
     height: 56,
@@ -2308,10 +2485,23 @@ const styles = StyleSheet.create({
     color: "#666",
     fontWeight: "500",
   },
+  historyFareContainer: {
+    alignItems: "flex-end",
+  },
   historyFare: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#28a745",
+  },
+  historyPassengerBadge: {
+    fontSize: 10,
+    color: "#007AFF",
+    backgroundColor: "#e7f3ff",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginTop: 2,
+    fontWeight: "600",
   },
   historyLocations: {
     marginBottom: 8,

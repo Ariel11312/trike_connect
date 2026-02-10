@@ -13,6 +13,7 @@ import rideRoutes from "./routes/rideRoute.js";
 import cookieParser from "cookie-parser";
 import path from "path";
 import fs from "fs";
+import driverRegistrationRoutes from './routes/DriverRegistrationRoute.js';
 
 // Force Node to use Cloudflare + Google DNS for SRV resolution
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
@@ -65,7 +66,7 @@ app.use('/api/message', messageRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/reports", reportRoutes);
-
+app.use('/api/driver-registrations', driverRegistrationRoutes);
 // Health check
 app.get("/health", (req, res) => {
   res.status(200).json({ success: true, message: "Server is running" });

@@ -25,6 +25,18 @@ const userSchema = new mongoose.Schema({
   sapiId: { type: String, trim: true },
   idCardImage: { type: String, trim: true }, // Stores the filename of the ID image (e.g., "id_1234567890_user_email_com.jpg")
   address: { type: String, trim: true }, // Extracted from OCR
+ RegistrationStatus: { 
+  type: String, 
+  enum: ['pending', 'approved', 'rejected'], 
+  default: 'pending' 
+},
+
+  // Ban/Suspension fields
+  isBanned: { type: Boolean, default: false },
+  banReason: { type: String, trim: true },
+  bannedAt: { type: Date },
+  banUntil: { type: Date }, // null for permanent ban
+  bannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Admin who banned the user
 
 }, { timestamps: true });
 
@@ -67,6 +79,36 @@ userSchema.methods.generatePasswordResetToken = function() {
   this.resetPasswordExpires = Date.now() + 30 * 60 * 1000; // 30 min
   return resetToken;
 };
+
+// Check if user is currently banned
+userSchema.methods.isCurrentlyBanned = function() {
+  if (!this.isBanned) return false;
+  
+  // If banUntil is null, it's a permanent ban
+  if (!this.banUntil) return true;
+  
+  // Check if temporary ban has expired
+  if (new Date() > this.banUntil) {
+    // Auto-unban if temporary ban expired
+    this.isBanned = false;
+    this.banReason = null;
+    this.bannedAt = null;
+    this.banUntil = null;
+    this.bannedBy = null;
+    this.save();
+    return false;
+  }
+  
+  return true;
+};
+
+// Virtual for ban status
+userSchema.virtual('banStatus').get(function() {
+  if (!this.isBanned) return 'active';
+  if (!this.banUntil) return 'permanently_banned';
+  if (new Date() > this.banUntil) return 'active';
+  return 'temporarily_banned';
+});
 
 const User = mongoose.model('User', userSchema);
 export default User;

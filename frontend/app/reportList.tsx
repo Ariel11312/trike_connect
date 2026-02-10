@@ -8,9 +8,10 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router'; // Import useRouter from expo-router
+import { Stack, useRouter } from 'expo-router';
 
 // Type definitions
 export type SeverityLevel = 'high' | 'medium' | 'low';
@@ -31,62 +32,20 @@ export interface Report {
   updatedAt: string;
   driverName: string;
   reporterName: string;
+  driverInitials: string;
+  reporterInitials: string;
+  driverProfilePic?: string | null;
+  reporterProfilePic?: string | null;
 }
 
 const ReportListScreen: React.FC = () => {
-  const router = useRouter(); // Initialize router
+  const router = useRouter();
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  // Sample data - Replace with actual API call
-  const sampleReports: Report[] = [
-    {
-      _id: '698a6915681642cc0dff51f0',
-      rideId: '698a646275b5cf0a9217f225',
-      driverId: '698103d39a117950f4f909c3',
-      reportedBy: '697fea4dc0d0f308fc7bd7aa',
-      reason: 'Rude or unprofessional behavior',
-      comment: '',
-      status: 'pending',
-      reportType: 'driver',
-      severity: 'medium',
-      createdAt: '2026-02-09T23:09:09.428+00:00',
-      updatedAt: '2026-02-09T23:09:09.428+00:00',
-      driverName: 'John Doe',
-      reporterName: 'Jane Smith',
-    },
-    {
-      _id: '698a6915681642cc0dff51f1',
-      rideId: '698a646275b5cf0a9217f226',
-      driverId: '698103d39a117950f4f909c4',
-      reportedBy: '697fea4dc0d0f308fc7bd7ab',
-      reason: 'Unsafe driving',
-      comment: 'Driver was speeding and running red lights',
-      status: 'pending',
-      reportType: 'driver',
-      severity: 'high',
-      createdAt: '2026-02-09T22:30:15.428+00:00',
-      updatedAt: '2026-02-09T22:30:15.428+00:00',
-      driverName: 'Mike Johnson',
-      reporterName: 'Tom Wilson',
-    },
-    {
-      _id: '698a6915681642cc0dff51f2',
-      rideId: '698a646275b5cf0a9217f227',
-      driverId: '698103d39a117950f4f909c5',
-      reportedBy: '697fea4dc0d0f308fc7bd7ac',
-      reason: 'Vehicle condition issues',
-      comment: 'Car was dirty and smelled bad',
-      status: 'resolved',
-      reportType: 'driver',
-      severity: 'low',
-      createdAt: '2026-02-09T21:15:30.428+00:00',
-      updatedAt: '2026-02-09T21:15:30.428+00:00',
-      driverName: 'Sarah Lee',
-      reporterName: 'Emma Davis',
-    },
-  ];
+  // API Base URL - Update with your actual backend URL
+const API_BASE_URL = 'http://192.168.100.37:5000/api/reports';
 
   useEffect(() => {
     fetchReports();
@@ -94,17 +53,30 @@ const ReportListScreen: React.FC = () => {
 
   const fetchReports = async (): Promise<void> => {
     try {
-      // Replace with actual API call
-      // const response = await fetch('YOUR_API_ENDPOINT/reports');
-      // const data: Report[] = await response.json();
-      // setReports(data);
+      setLoading(true);
+      const response = await fetch(`${API_BASE_URL}/`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          // Add authorization header if needed
+          // 'Authorization': `Bearer ${yourAuthToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch reports');
+      }
+
+      const result = await response.json();
       
-      // Simulating API call
-      setTimeout(() => {
-        setReports(sampleReports);
-        setLoading(false);
-        setRefreshing(false);
-      }, 1000);
+      if (result.success) {
+        setReports(result.data);
+      } else {
+        throw new Error(result.message || 'Failed to fetch reports');
+      }
+
+      setLoading(false);
+      setRefreshing(false);
     } catch (error) {
       console.error('Error fetching reports:', error);
       Alert.alert('Error', 'Failed to fetch reports. Please try again.');
@@ -168,31 +140,53 @@ const ReportListScreen: React.FC = () => {
     });
   };
 
-  // Change this line in handleReportPress:
-const handleReportPress = (item: Report): void => {
-  router.push({
-    pathname: '/reportDetails', // Changed from '/ReportDetails' to '/reportDetails'
-    params: { report: JSON.stringify(item) }
-  });
-};
+  const handleReportPress = (item: Report): void => {
+    router.push({
+      pathname: '/reportDetails',
+      params: { report: JSON.stringify(item) },
+    });
+  };
 
   const handleDriverRegistration = (): void => {
     router.push('/DriverRegistration');
   };
 
+  // Avatar component to show profile pic or initials
+  const Avatar: React.FC<{
+    profilePic?: string | null;
+    initials: string;
+    size?: number;
+  }> = ({ profilePic, initials, size = 40 }) => {
+    if (profilePic) {
+      return (
+        <Image
+          source={{ uri: profilePic }}
+          style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
+        />
+      );
+    }
+
+    return (
+      <View style={[styles.initialsContainer, { width: size, height: size, borderRadius: size / 2 }]}>
+        <Text style={[styles.initialsText, { fontSize: size * 0.4 }]}>{initials}</Text>
+      </View>
+    );
+  };
+
   const renderReportItem = ({ item }: { item: Report }) => (
-    <TouchableOpacity
-      style={styles.reportCard}
-      onPress={() => handleReportPress(item)}
-    >
+    <TouchableOpacity style={styles.reportCard} onPress={() => handleReportPress(item)}>
       <View style={styles.reportHeader}>
         <View style={styles.headerLeft}>
-          <View style={styles.iconContainer}>
-            <Text style={styles.iconText}>{getSeverityIcon(item.severity)}</Text>
-          </View>
+          <Avatar
+            profilePic={item.driverProfilePic}
+            initials={item.driverInitials}
+            size={40}
+          />
           <View style={styles.headerText}>
             <Text style={styles.driverName}>{item.driverName}</Text>
-            <Text style={styles.reportedBy}>Reported by {item.reporterName}</Text>
+            <View style={styles.reporterRow}>   
+              <Text style={styles.reportedBy}>Reported by {item.reporterName}</Text>
+            </View>
           </View>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
@@ -229,12 +223,10 @@ const handleReportPress = (item: Report): void => {
 
   return (
     <SafeAreaView style={styles.container}>
+                <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Reports Dashboard</Text>
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={handleDriverRegistration}
-        >
+        <TouchableOpacity style={styles.navButton} onPress={handleDriverRegistration}>
           <Text style={styles.navButtonIcon}>👤</Text>
           <Text style={styles.navButtonText}>Driver Registration</Text>
         </TouchableOpacity>
@@ -323,16 +315,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flex: 1,
   },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f3f4f6',
+  avatar: {
+    backgroundColor: '#e5e7eb',
+  },
+  initialsContainer: {
+    backgroundColor: '#3b82f6',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  iconText: {
-    fontSize: 20,
+  initialsText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
   headerText: {
     marginLeft: 12,
@@ -343,10 +336,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#111827',
   },
+  reporterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   reportedBy: {
     fontSize: 12,
     color: '#6b7280',
-    marginTop: 2,
   },
   statusBadge: {
     paddingHorizontal: 8,

@@ -285,7 +285,8 @@ export const login = async (req, res) => {
         lastName: user.lastName,    
         email: user.email,
         phoneNumber: user.phoneNumber,
-        role: user.role
+        role: user.role,
+        RegistrationStatus:user.RegistrationStatus
       }
     });
   } catch (error) {

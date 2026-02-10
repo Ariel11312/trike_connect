@@ -17,6 +17,34 @@ import { useState } from "react";
 import { Stack, router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import { Picker } from '@react-native-picker/picker';
+
+// TODA names from fare matrix
+const TODA_NAMES = [
+  "All TODA",
+  "BNBB TODA",
+  "BPP TODA",
+  "CALANTIPAY TODA",
+  "PC TODA",
+  "CONCEPCION TODA",
+  "HINUKAY TODA",
+  "MT TODA",
+  "PAGALA TODA",
+  "PIEL TODA",
+  "API, BA, LB TODA",
+  "BB, MA NO. SM, STA ELENA TODA",
+  "SR TODA",
+  "ASBATODA",
+  "SM TODA",
+  "APO TODA",
+  "SS, STS TODA",
+  "STA TODA",
+  "TPA TODA",
+  "BTI TODA",
+  "TC TODA",
+  "TILAPAYONG TODA",
+  "VDF TODA"
+];
 
 export default function Register() {
   const [role, setRole] = useState<"commuter" | "driver">("commuter");
@@ -35,8 +63,8 @@ export default function Register() {
   // Driver-specific
   const [todaName, setTodaName] = useState("");
   const [licensePlate, setLicensePlate] = useState("");
-    const [driversLicense,setDriversLicense] = useState("");
-    const [sapiId,setSapiId] = useState("");
+  const [driversLicense, setDriversLicense] = useState("");
+  const [sapiId, setSapiId] = useState("");
   const [idCardUri, setIdCardUri] = useState<string | null>(null);
   const [idCardBase64, setIdCardBase64] = useState<string | null>(null);
   const [isValidResident, setIsValidResident] = useState(false);
@@ -370,46 +398,72 @@ export default function Register() {
             {/* Driver fields */}
             {role === "driver" && (
               <>
+                {/* TODA Name Picker */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Select TODA</Text>
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={todaName}
+                      onValueChange={(itemValue) => setTodaName(itemValue)}
+                      style={styles.picker}
+                    >
+                      <Picker.Item label="Choose your TODA..." value="" />
+                      {TODA_NAMES.map((toda, index) => (
+                        <Picker.Item key={index} label={toda} value={toda} />
+                      ))}
+                    </Picker>
+                  </View>
+                </View>
+
                 <TextInput
                   style={styles.input}
-                  placeholder="TODA Name"
-                  value={todaName}
-                  onChangeText={setTodaName}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="License Plate"
+                  placeholder="License Plate (e.g., ABC-1234)"
                   value={licensePlate}
                   onChangeText={setLicensePlate}
                   autoCapitalize="characters"
                 />
                 <TextInput
                   style={styles.input}
-                  placeholder="Driver's License"
+                  placeholder="Driver's License Number"
                   value={driversLicense}
                   onChangeText={setDriversLicense}
                   autoCapitalize="characters"
                 />
-                                <TextInput
+                <TextInput
                   style={styles.input}
-                  placeholder="SAPI ID"
+                  placeholder="SAPI ID Number"
                   value={sapiId}
                   onChangeText={setSapiId}
                   autoCapitalize="characters"
                 />
-                <Text>Upload Driver's License</Text>
+                
+                <Text style={styles.uploadLabel}>📷 Upload Driver's License</Text>
                 <TouchableOpacity style={styles.scanIDButton} onPress={handlePickImage}>
                   <Text style={styles.scanIDText}>
-                    {idCardUri ? "Change ID" : "Upload ID"}
+                    {idCardUri ? "✓ Change ID Photo" : "📸 Upload ID Photo"}
                   </Text>
                 </TouchableOpacity>
+                
                 {idCardUri && (
-                  <Image
-                    source={{ uri: idCardUri }}
-                    style={styles.idPreview}
-                  />
+                  <View style={styles.idPreviewContainer}>
+                    <Image
+                      source={{ uri: idCardUri }}
+                      style={styles.idPreview}
+                    />
+                    {isValidResident && (
+                      <View style={styles.verifiedBadgeSmall}>
+                        <Text style={styles.verifiedTextSmall}>✓ ID Verified</Text>
+                      </View>
+                    )}
+                  </View>
                 )}
-                {isVerifyingID && <ActivityIndicator size="large" />}
+                
+                {isVerifyingID && (
+                  <View style={styles.verifyingContainer}>
+                    <ActivityIndicator size="large" color="#007AFF" />
+                    <Text style={styles.verifyingText}>Verifying ID...</Text>
+                  </View>
+                )}
               </>
             )}
 
@@ -433,8 +487,16 @@ export default function Register() {
           <Modal visible={modalVisible} transparent animationType="fade">
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
+                <View style={[
+                  styles.modalIconContainer,
+                  modalType === "success" ? styles.successIcon : styles.errorIcon
+                ]}>
+                  <Text style={styles.modalIcon}>
+                    {modalType === "success" ? "✓" : "✕"}
+                  </Text>
+                </View>
                 <Text style={styles.modalTitle}>
-                  {modalType === "success" ? "✓ Success" : "⚠️ Error"}
+                  {modalType === "success" ? "Success!" : "Error"}
                 </Text>
                 <Text style={styles.modalMessage}>{modalMessage}</Text>
                 <TouchableOpacity style={styles.modalButton} onPress={handleModalClose}>
@@ -452,7 +514,7 @@ export default function Register() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: "#fff" 
+    backgroundColor: "#f5f5f5" 
   },
   scrollContent: {
     flexGrow: 1,
@@ -465,27 +527,30 @@ const styles = StyleSheet.create({
     marginBottom: 24, 
     textAlign: "center",
     marginTop: 20,
+    color: "#333",
   },
   roleContainer: { 
     flexDirection: "row", 
-    marginBottom: 16, 
-    gap: 8 
+    marginBottom: 20, 
+    gap: 12 
   },
   roleButton: { 
     flex: 1, 
-    padding: 12, 
-    borderWidth: 1, 
-    borderColor: "#ccc", 
-    borderRadius: 8, 
-    alignItems: "center" 
+    padding: 16, 
+    borderWidth: 2, 
+    borderColor: "#ddd", 
+    borderRadius: 12, 
+    alignItems: "center",
+    backgroundColor: "#fff",
   },
   roleActive: { 
     backgroundColor: "#007AFF", 
     borderColor: "#007AFF" 
   },
   roleText: { 
-    color: "#000", 
-    fontWeight: "600" 
+    color: "#333", 
+    fontWeight: "600",
+    fontSize: 16,
   },
   roleTextActive: { 
     color: "#fff" 
@@ -493,19 +558,51 @@ const styles = StyleSheet.create({
   input: { 
     height: 50, 
     borderWidth: 1, 
-    borderColor: "#ccc", 
-    borderRadius: 8, 
+    borderColor: "#ddd", 
+    borderRadius: 12, 
     paddingHorizontal: 16, 
     marginBottom: 16,
     backgroundColor: "#fff",
+    fontSize: 16,
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    marginBottom: 8,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+  },
+  picker: {
+    height: 50,
+  },
+  uploadLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+    marginTop: 8,
   },
   verifyButton: { 
     height: 50, 
     backgroundColor: "#FF9500", 
-    borderRadius: 8, 
+    borderRadius: 12, 
     justifyContent: "center", 
     alignItems: "center", 
-    marginBottom: 16 
+    marginBottom: 16,
+    shadowColor: "#FF9500",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   verifyButtonText: { 
     color: "#fff", 
@@ -515,55 +612,100 @@ const styles = StyleSheet.create({
   verifyCodeButton: { 
     height: 50, 
     backgroundColor: "#4CAF50", 
-    borderRadius: 8, 
+    borderRadius: 12, 
     justifyContent: "center", 
-    alignItems: "center" 
+    alignItems: "center",
+    shadowColor: "#4CAF50",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   verifiedBadge: { 
     backgroundColor: "#E8F5E9", 
-    padding: 12, 
-    borderRadius: 8, 
+    padding: 16, 
+    borderRadius: 12, 
     marginBottom: 16, 
-    alignItems: "center" 
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#4CAF50",
   },
   verifiedText: { 
     color: "#4CAF50", 
     fontSize: 16, 
     fontWeight: "600" 
   },
+  verifiedBadgeSmall: {
+    backgroundColor: "#E8F5E9",
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+  },
+  verifiedTextSmall: {
+    color: "#4CAF50",
+    fontSize: 14,
+    fontWeight: "600",
+  },
   scanIDButton: { 
-    height: 60, 
+    height: 56, 
     borderRadius: 12, 
     backgroundColor: "#007AFF", 
     justifyContent: "center", 
     alignItems: "center", 
-    marginVertical: 8 
+    marginBottom: 16,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   scanIDText: { 
     color: "#fff", 
-    fontWeight: "600" 
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  idPreviewContainer: {
+    marginBottom: 16,
   },
   idPreview: { 
     width: "100%", 
-    height: 200, 
-    alignSelf: "center", 
-    marginVertical: 8, 
-    borderRadius: 8,
+    height: 220, 
+    borderRadius: 12,
     resizeMode: "contain",
+    backgroundColor: "#f0f0f0",
+  },
+  verifyingContainer: {
+    alignItems: "center",
+    padding: 16,
+    marginBottom: 16,
+  },
+  verifyingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
   },
   button: { 
-    height: 50, 
+    height: 56, 
     backgroundColor: "#007AFF", 
-    borderRadius: 8, 
+    borderRadius: 12, 
     justifyContent: "center", 
     alignItems: "center", 
     marginTop: 8,
     marginBottom: 20,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   buttonText: { 
     color: "#fff", 
-    fontSize: 16, 
-    fontWeight: "600" 
+    fontSize: 18, 
+    fontWeight: "700" 
   },
   modalOverlay: { 
     flex: 1, 
@@ -573,30 +715,61 @@ const styles = StyleSheet.create({
   },
   modalContent: { 
     backgroundColor: "#fff", 
-    borderRadius: 16, 
-    padding: 24, 
-    width: "80%", 
+    borderRadius: 20, 
+    padding: 28, 
+    width: "85%", 
     maxWidth: 400,
-    alignItems: "center" 
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  successIcon: {
+    backgroundColor: "#4CAF50",
+  },
+  errorIcon: {
+    backgroundColor: "#F44336",
+  },
+  modalIcon: {
+    fontSize: 32,
+    color: "#fff",
+    fontWeight: "bold",
   },
   modalTitle: { 
     fontSize: 24, 
     fontWeight: "bold", 
-    marginBottom: 12 
+    marginBottom: 12,
+    color: "#333",
   },
   modalMessage: { 
     fontSize: 16, 
     textAlign: "center", 
     color: "#666", 
-    marginBottom: 24 
+    marginBottom: 24,
+    lineHeight: 24,
   },
   modalButton: { 
     width: "100%", 
     height: 50, 
-    borderRadius: 8, 
+    borderRadius: 12, 
     justifyContent: "center", 
     alignItems: "center", 
-    backgroundColor: "#007AFF" 
+    backgroundColor: "#007AFF",
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   modalButtonText: { 
     color: "#fff", 

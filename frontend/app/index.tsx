@@ -20,11 +20,11 @@ export default function Index() {
 
   // Modal states
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<"success" | "error">("success");
+  const [modalType, setModalType] = useState<"success" | "error" | "warning">("success");
   const [modalMessage, setModalMessage] = useState("");
   const [userRole, setUserRole] = useState<string | null>(null);
 
-  const showModal = (type: "success" | "error", message: string) => {
+  const showModal = (type: "success" | "error" | "warning", message: string) => {
     setModalType(type);
     setModalMessage(message);
     setModalVisible(true);
@@ -37,7 +37,7 @@ export default function Index() {
       if (userRole === "driver") {
         router.replace("/driverHome");
       } else if (userRole === "commuter") {
-        router.replace("/chat");
+        router.replace("/userHome");
       } else {
         // Default fallback
         router.replace("/userHome");
@@ -72,6 +72,42 @@ export default function Index() {
       const data = await res.json();
 
       if (res.ok) {
+        // ==================== CHECK DRIVER REGISTRATION STATUS ====================
+        // If user is a driver, check their registration status before allowing login
+        if (data.user.role === "driver") {
+          const registrationStatus = data.user.RegistrationStatus;
+          
+          // PENDING: Driver registration is waiting for admin approval
+          if (registrationStatus === "pending") {
+            showModal(
+              "warning", 
+              "Your driver registration is currently pending approval.\n\n" +
+              "Please wait for an administrator to review and verify your documents. " +
+              "You will be notified once your registration is approved.\n\n" +
+              "Thank you for your patience!"
+            );
+            setIsLoading(false);
+            return; // Prevent login
+          } 
+          
+          // REJECTED: Driver registration was rejected by admin
+          else if (registrationStatus === "rejected") {
+            const rejectionReason = data.user.rejectionReason || "Your registration did not meet our requirements.";
+            showModal(
+              "error", 
+              "Your driver registration has been rejected.\n\n" +
+              `Reason: ${rejectionReason}\n\n` +
+              "Please contact our support team for assistance or submit a new application with updated documents."
+            );
+            setIsLoading(false);
+            return; // Prevent login
+          }
+          
+          // APPROVED: Driver can proceed with login
+          // (No action needed, continue with normal login flow below)
+        }
+        // ==========================================================================
+        
         // Store token and user data
         await AsyncStorage.setItem('token', data.token);
         await AsyncStorage.setItem('user', JSON.stringify(data.user));
@@ -84,6 +120,7 @@ export default function Index() {
         showModal("error", data.message || "Invalid email or password");
       }
     } catch (error) {
+      console.error("Login error:", error);
       showModal("error", "Network error. Please check your connection.");
     } finally {
       setIsLoading(false);
@@ -154,7 +191,7 @@ export default function Index() {
           </Text>
         </Pressable>
 
-        {/* Success/Error Modal */}
+        {/* Success/Error/Warning Modal */}
         <Modal
           animationType="fade"
           transparent={true}
@@ -168,16 +205,18 @@ export default function Index() {
                   styles.modalIconContainer,
                   modalType === "success"
                     ? styles.successIcon
+                    : modalType === "warning"
+                    ? styles.warningIcon
                     : styles.errorIcon,
                 ]}
               >
                 <Text style={styles.modalIcon}>
-                  {modalType === "success" ? "✓" : "✕"}
+                  {modalType === "success" ? "✓" : modalType === "warning" ? "⏳" : "✕"}
                 </Text>
               </View>
 
               <Text style={styles.modalTitle}>
-                {modalType === "success" ? "Success!" : "Error"}
+                {modalType === "success" ? "Success!" : modalType === "warning" ? "Pending Approval" : "Access Denied"}
               </Text>
 
               <Text style={styles.modalMessage}>{modalMessage}</Text>
@@ -187,6 +226,8 @@ export default function Index() {
                   styles.modalButton,
                   modalType === "success"
                     ? styles.successButton
+                    : modalType === "warning"
+                    ? styles.warningButton
                     : styles.errorButton,
                 ]}
                 onPress={handleModalClose}
@@ -273,7 +314,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 24,
-    width: "80%",
+    width: "85%",
+    maxWidth: 400,
     alignItems: "center",
   },
   modalIconContainer: {
@@ -287,6 +329,9 @@ const styles = StyleSheet.create({
   successIcon: {
     backgroundColor: "#4CAF50",
   },
+  warningIcon: {
+    backgroundColor: "#FF9800",
+  },
   errorIcon: {
     backgroundColor: "#F44336",
   },
@@ -296,15 +341,17 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   modalTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "bold",
     marginBottom: 12,
+    textAlign: "center",
   },
   modalMessage: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: "center",
     color: "#666",
     marginBottom: 24,
+    lineHeight: 22,
   },
   modalButton: {
     width: "100%",
@@ -315,6 +362,9 @@ const styles = StyleSheet.create({
   },
   successButton: {
     backgroundColor: "#4CAF50",
+  },
+  warningButton: {
+    backgroundColor: "#FF9800",
   },
   errorButton: {
     backgroundColor: "#F44336",

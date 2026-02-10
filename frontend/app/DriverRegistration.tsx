@@ -14,175 +14,99 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 
-// Type definitions
+// ==================== API CONFIGURATION ====================
+// IMPORTANT: Update these URLs based on your environment:
+// For Physical Device on same network: Use your computer's local IP
+const API_BASE_URL = 'http://192.168.100.37:5000/api';
+const UPLOADS_BASE_URL = 'http://192.168.100.37:5000/uploads';
+
+// For Android Emulator, use:
+// const API_BASE_URL = 'http://10.0.2.2:5000/api';
+// const UPLOADS_BASE_URL = 'http://10.0.2.2:5000/uploads';
+
+// For iOS Simulator, use:
+// const API_BASE_URL = 'http://localhost:5000/api';
+// const UPLOADS_BASE_URL = 'http://localhost:5000/uploads';
+
+// For Production, use:
+// const API_BASE_URL = 'https://your-api-domain.com/api';
+// const UPLOADS_BASE_URL = 'https://your-api-domain.com/uploads';
+// ===========================================================
+
+// Type definitions matching backend User model
 type RegistrationStatus = 'pending' | 'approved' | 'rejected';
-type BackgroundCheckStatus = 'pending' | 'approved' | 'failed';
-type VehicleType = 'Sedan' | 'SUV' | 'Hatchback' | 'Van' | 'Truck';
-type DocumentType = 'id_front' | 'id_back' | 'driver_license' | 'vehicle_registration' | 'insurance';
 
-interface Document {
-  type: DocumentType;
-  url: string;
-  verified: boolean;
-  uploadedAt: string;
-}
-
-interface DriverRegistration {
+interface DriverUser {
   _id: string;
-  driverName: string;
+  firstName: string;
+  lastName: string;
   email: string;
-  phone: string;
-  vehicleType: VehicleType;
-  vehicleMake: string;
-  vehicleModel: string;
-  vehicleYear: number;
-  licensePlate: string;
-  status: RegistrationStatus;
-  documentsVerified: boolean;
-  backgroundCheckStatus: BackgroundCheckStatus;
-  documents: Document[];
-  profileImage?: string;
+  phoneNumber: string;
+  role: 'driver';
+  RegistrationStatus: RegistrationStatus;
+  profilePicture?: string;
+  sapiId?: string;
+  
+  // Vehicle information
+  vehicleType?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
+  licensePlate?: string;
+  
+  // Documents and verification
+  idFront?: string;
+  idBack?: string;
+  idCardImage?: string; // Changed from driversLicense to idCardImage
+  vehicleRegistration?: string;
+  insurance?: string;
+  
+  documentsVerified?: boolean;
+  backgroundCheckStatus?: 'pending' | 'approved' | 'failed';
+  rejectionReason?: string;
+  
   createdAt: string;
   updatedAt: string;
 }
 
+/**
+ * Helper function to construct full image URLs from file paths
+ * Handles both relative paths and full URLs
+ */
+const getImageUrl = (imagePath?: string): string | undefined => {
+  if (!imagePath) {
+    console.log('No image path provided');
+    return undefined;
+  }
+  
+  // If the path is already a full URL, return it as is
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    console.log('Full URL detected:', imagePath);
+    return imagePath;
+  }
+  
+  // Remove any leading slashes, backslashes, or "uploads/" prefix
+  let cleanPath = imagePath
+    .replace(/^[\/\\]+/, '')           // Remove leading slashes
+    .replace(/^uploads[\/\\]/, '');    // Remove "uploads/" prefix if exists
+  
+  // Construct full URL
+  const fullUrl = `${UPLOADS_BASE_URL}/${cleanPath}`;
+  console.log('Constructed image URL:', fullUrl);
+  
+  return fullUrl;
+};
+
 const DriverRegistrationReportsScreen: React.FC = () => {
   const router = useRouter();
-  const [registrations, setRegistrations] = useState<DriverRegistration[]>([]);
+  const [registrations, setRegistrations] = useState<DriverUser[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [selectedRegistration, setSelectedRegistration] = useState<DriverRegistration | null>(null);
+  const [selectedRegistration, setSelectedRegistration] = useState<DriverUser | null>(null);
   const [modalVisible, setModalVisible] = useState<boolean>(false);
-  const [selectedDocument, setSelectedDocument] = useState<string>('');
-
-  // Sample data with documents
-  const sampleRegistrations: DriverRegistration[] = [
-    {
-      _id: '698a6915681642cc0dff51f3',
-      driverName: 'Alex Martinez',
-      email: 'alex.martinez@example.com',
-      phone: '+1234567890',
-      vehicleType: 'Sedan',
-      vehicleMake: 'Toyota',
-      vehicleModel: 'Camry',
-      vehicleYear: 2022,
-      licensePlate: 'ABC123',
-      status: 'pending',
-      documentsVerified: false,
-      backgroundCheckStatus: 'pending',
-      profileImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-      documents: [
-        {
-          type: 'id_front',
-          url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-10T10:30:00.000+00:00',
-        },
-        {
-          type: 'id_back',
-          url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-10T10:30:00.000+00:00',
-        },
-        {
-          type: 'driver_license',
-          url: 'https://images.unsplash.com/photo-1585771724684-382b4b8ef97f?w=400&h-300&fit=crop',
-          verified: false,
-          uploadedAt: '2026-02-10T10:30:00.000+00:00',
-        },
-        {
-          type: 'vehicle_registration',
-          url: 'https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400&h=300&fit=crop',
-          verified: false,
-          uploadedAt: '2026-02-10T10:30:00.000+00:00',
-        },
-      ],
-      createdAt: '2026-02-10T10:30:00.000+00:00',
-      updatedAt: '2026-02-10T10:30:00.000+00:00',
-    },
-    {
-      _id: '698a6915681642cc0dff51f4',
-      driverName: 'Maria Garcia',
-      email: 'maria.garcia@example.com',
-      phone: '+1234567891',
-      vehicleType: 'SUV',
-      vehicleMake: 'Honda',
-      vehicleModel: 'CR-V',
-      vehicleYear: 2023,
-      licensePlate: 'XYZ789',
-      status: 'approved',
-      documentsVerified: true,
-      backgroundCheckStatus: 'approved',
-      profileImage: 'https://randomuser.me/api/portraits/women/44.jpg',
-      documents: [
-        {
-          type: 'id_front',
-          url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-09T14:20:00.000+00:00',
-        },
-        {
-          type: 'id_back',
-          url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-09T14:20:00.000+00:00',
-        },
-        {
-          type: 'driver_license',
-          url: 'https://images.unsplash.com/photo-1585771724684-382b4b8ef97f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-09T14:20:00.000+00:00',
-        },
-        {
-          type: 'vehicle_registration',
-          url: 'https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-09T14:20:00.000+00:00',
-        },
-        {
-          type: 'insurance',
-          url: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=400&h=300&fit=crop',
-          verified: true,
-          uploadedAt: '2026-02-09T14:20:00.000+00:00',
-        },
-      ],
-      createdAt: '2026-02-09T14:20:00.000+00:00',
-      updatedAt: '2026-02-09T16:45:00.000+00:00',
-    },
-    {
-      _id: '698a6915681642cc0dff51f5',
-      driverName: 'James Wilson',
-      email: 'james.wilson@example.com',
-      phone: '+1234567892',
-      vehicleType: 'Sedan',
-      vehicleMake: 'Ford',
-      vehicleModel: 'Fusion',
-      vehicleYear: 2021,
-      licensePlate: 'LMN456',
-      status: 'rejected',
-      documentsVerified: false,
-      backgroundCheckStatus: 'failed',
-      profileImage: 'https://randomuser.me/api/portraits/men/67.jpg',
-      documents: [
-        {
-          type: 'id_front',
-          url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400&h=300&fit=crop',
-          verified: false,
-          uploadedAt: '2026-02-08T09:15:00.000+00:00',
-        },
-        {
-          type: 'driver_license',
-          url: 'https://images.unsplash.com/photo-1585771724684-382b4b8ef97f?w=400&h=300&fit=crop',
-          verified: false,
-          uploadedAt: '2026-02-08T09:15:00.000+00:00',
-        },
-      ],
-      createdAt: '2026-02-08T09:15:00.000+00:00',
-      updatedAt: '2026-02-08T18:30:00.000+00:00',
-    },
-  ];
+  const [selectedDocument, setSelectedDocument] = useState<{ type: string; url: string } | null>(null);
 
   useEffect(() => {
     fetchRegistrations();
@@ -190,14 +114,38 @@ const DriverRegistrationReportsScreen: React.FC = () => {
 
   const fetchRegistrations = async (): Promise<void> => {
     try {
-      // Replace with actual API call
-      setTimeout(() => {
-        setRegistrations(sampleRegistrations);
-        setLoading(false);
-        setRefreshing(false);
-      }, 1000);
-    } catch (error) {
+      setLoading(true);
+      console.log('Fetching registrations from:', `${API_BASE_URL}/driver-registrations/`);
+      
+      const response = await fetch(`${API_BASE_URL}/driver-registrations/?page=1&limit=100`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+      console.log('Fetch response:', { success: data.success, count: data.data?.length });
+
+      if (response.ok && data.success) {
+        setRegistrations(data.data);
+        
+        // Log image paths for debugging
+        data.data.forEach((reg: DriverUser) => {
+          if (reg.profilePicture) {
+            console.log(`Profile picture for ${reg.firstName}:`, reg.profilePicture);
+          }
+        });
+      } else {
+        throw new Error(data.message || 'Failed to fetch registrations');
+      }
+    } catch (error: any) {
       console.error('Error fetching registrations:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to fetch driver registrations'
+      );
+    } finally {
       setLoading(false);
       setRefreshing(false);
     }
@@ -221,7 +169,7 @@ const DriverRegistrationReportsScreen: React.FC = () => {
     }
   };
 
-  const getBackgroundCheckColor = (status: BackgroundCheckStatus): string => {
+  const getBackgroundCheckColor = (status?: 'pending' | 'approved' | 'failed'): string => {
     switch (status) {
       case 'approved':
         return '#10b981';
@@ -245,32 +193,50 @@ const DriverRegistrationReportsScreen: React.FC = () => {
     });
   };
 
-  const getDocumentTypeLabel = (type: DocumentType): string => {
-    switch (type) {
-      case 'id_front':
-        return 'ID Front';
-      case 'id_back':
-        return 'ID Back';
-      case 'driver_license':
-        return 'Driver License';
-      case 'vehicle_registration':
-        return 'Vehicle Registration';
-      case 'insurance':
-        return 'Insurance';
-      default:
-        return type;
-    }
+  const getFullName = (user: DriverUser): string => {
+    return `${user.firstName} ${user.lastName}`;
   };
 
-  const handleViewDocuments = (registration: DriverRegistration): void => {
+  const getDocuments = (user: DriverUser) => {
+    const docs = [];
+    
+    if (user.idFront) {
+      const url = getImageUrl(user.idFront);
+      if (url) docs.push({ type: 'ID Front', url });
+    }
+    if (user.idBack) {
+      const url = getImageUrl(user.idBack);
+      if (url) docs.push({ type: 'ID Back', url });
+    }
+    if (user.idCardImage) {
+      const url = getImageUrl(user.idCardImage);
+      if (url) docs.push({ type: "ID Card Image", url });
+    }
+    if (user.vehicleRegistration) {
+      const url = getImageUrl(user.vehicleRegistration);
+      if (url) docs.push({ type: 'Vehicle Registration', url });
+    }
+    if (user.insurance) {
+      const url = getImageUrl(user.insurance);
+      if (url) docs.push({ type: 'Insurance', url });
+    }
+    
+    console.log(`Documents for ${user.firstName}:`, docs.length);
+    return docs;
+  };
+
+  const handleViewDocuments = (registration: DriverUser): void => {
+    console.log('Viewing documents for:', registration.firstName);
     setSelectedRegistration(registration);
     setModalVisible(true);
-    if (registration.documents.length > 0) {
-      setSelectedDocument(registration.documents[0].url);
+    const docs = getDocuments(registration);
+    if (docs.length > 0) {
+      setSelectedDocument(docs[0]);
+      console.log('Selected first document:', docs[0]);
     }
   };
 
-  const handleApprove = (registrationId: string): void => {
+  const handleApprove = async (userId: string): Promise<void> => {
     Alert.alert(
       'Approve Registration',
       'Are you sure you want to approve this driver registration?',
@@ -278,188 +244,275 @@ const DriverRegistrationReportsScreen: React.FC = () => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Approve',
-          style: 'destructive',
-          onPress: () => {
-            // Update registration status
-            setRegistrations(prev =>
-              prev.map(reg =>
-                reg._id === registrationId
-                  ? { ...reg, status: 'approved', documentsVerified: true, backgroundCheckStatus: 'approved' }
-                  : reg
-              )
-            );
-            Alert.alert('Success', 'Driver registration approved successfully!');
+          style: 'default',
+          onPress: async () => {
+            try {
+              const response = await fetch(`${API_BASE_URL}/driver-registrations/${userId}/approve`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                Alert.alert('Success', 'Driver registration approved successfully!');
+                fetchRegistrations(); // Refresh the list
+              } else {
+                throw new Error(data.message || 'Failed to approve registration');
+              }
+            } catch (error: any) {
+              console.error('Error approving registration:', error);
+              Alert.alert(
+                'Error',
+                error.message || 'Failed to approve registration'
+              );
+            }
           },
         },
       ]
     );
   };
 
-  const handleReject = (registrationId: string): void => {
-    Alert.alert(
+  const handleReject = async (userId: string): Promise<void> => {
+    Alert.prompt(
       'Reject Registration',
-      'Are you sure you want to reject this driver registration?',
+      'Please provide a reason for rejection:',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Reject',
           style: 'destructive',
-          onPress: () => {
-            // Update registration status
-            setRegistrations(prev =>
-              prev.map(reg =>
-                reg._id === registrationId
-                  ? { ...reg, status: 'rejected', backgroundCheckStatus: 'failed' }
-                  : reg
-              )
-            );
-            Alert.alert('Success', 'Driver registration rejected.');
+          onPress: async (reason) => {
+            try {
+              const response = await fetch(`${API_BASE_URL}/driver-registrations/${userId}/reject`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  reason: reason || 'Registration did not meet requirements'
+                }),
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                Alert.alert('Success', 'Driver registration rejected.');
+                fetchRegistrations(); // Refresh the list
+              } else {
+                throw new Error(data.message || 'Failed to reject registration');
+              }
+            } catch (error: any) {
+              console.error('Error rejecting registration:', error);
+              Alert.alert(
+                'Error',
+                error.message || 'Failed to reject registration'
+              );
+            }
           },
         },
-      ]
+      ],
+      'plain-text'
     );
   };
 
-  const renderRegistrationItem = ({ item }: { item: DriverRegistration }) => (
-    <TouchableOpacity
-      style={styles.registrationCard}
-      onPress={() => handleViewDocuments(item)}
-    >
-      <View style={styles.cardHeader}>
-        <View style={styles.avatarContainer}>
-          {item.profileImage ? (
-            <Image
-              source={{ uri: item.profileImage }}
-              style={styles.profileImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <Icon name="person" size={32} color="#2563eb" />
+  const renderRegistrationItem = ({ item }: { item: DriverUser }) => {
+    const documents = getDocuments(item);
+    const fullName = getFullName(item);
+    const profileImageUrl = getImageUrl(item.profilePicture);
+    
+    return (
+      <TouchableOpacity
+        style={styles.registrationCard}
+        onPress={() => handleViewDocuments(item)}
+      >
+        <View style={styles.cardHeader}>
+          <Stack.Screen options={{ headerShown: false }} />
+          <View style={styles.avatarContainer}>
+            {profileImageUrl ? (
+              <Image
+                source={{ uri: profileImageUrl }}
+                style={styles.profileImage}
+                resizeMode="cover"
+                onError={(error) => {
+                  console.error('Failed to load profile image:', profileImageUrl);
+                  console.error('Error details:', error.nativeEvent.error);
+                }}
+                onLoad={() => {
+                  console.log('Profile image loaded successfully:', profileImageUrl);
+                }}
+              />
+            ) : (
+              <Icon name="person" size={32} color="#2563eb" />
+            )}
+          </View>
+          <View style={styles.headerInfo}>
+            <Text style={styles.driverName}>{fullName}</Text>
+            <Text style={styles.email}>{item.email}</Text>
+            <Text style={styles.phone}>{item.phoneNumber}</Text>
+            {item.sapiId && (
+              <Text style={styles.sapiId}>ID: {item.sapiId}</Text>
+            )}
+            <TouchableOpacity
+              style={styles.viewDocsButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleViewDocuments(item);
+              }}
+            >
+              <Icon name="photo-library" size={16} color="#2563eb" />
+              <Text style={styles.viewDocsText}>
+                {documents.length} documents
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.RegistrationStatus) }]}>
+            <Text style={styles.statusText}>{item.RegistrationStatus.toUpperCase()}</Text>
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.cardBody}>
+          {item.vehicleMake && item.vehicleModel && (
+            <>
+              <View style={styles.infoRow}>
+                <Icon name="directions-car" size={20} color="#6b7280" />
+                <Text style={styles.infoText}>
+                  {item.vehicleYear ? `${item.vehicleYear} ` : ''}
+                  {item.vehicleMake} {item.vehicleModel}
+                  {item.vehicleType ? ` (${item.vehicleType})` : ''}
+                </Text>
+              </View>
+
+              {item.licensePlate && (
+                <View style={styles.infoRow}>
+                  <Icon name="confirmation-number" size={20} color="#6b7280" />
+                  <Text style={styles.infoText}>License Plate: {item.licensePlate}</Text>
+                </View>
+              )}
+            </>
+          )}
+
+          <View style={styles.verificationRow}>
+            <View style={styles.verificationItem}>
+              <Icon
+                name={item.documentsVerified ? 'check-circle' : 'cancel'}
+                size={20}
+                color={item.documentsVerified ? '#10b981' : '#ef4444'}
+              />
+              <Text style={styles.verificationText}>
+                Documents ({documents.length})
+              </Text>
+            </View>
+
+            <View style={styles.verificationItem}>
+              <Icon
+                name={
+                  item.backgroundCheckStatus === 'approved'
+                    ? 'check-circle'
+                    : item.backgroundCheckStatus === 'failed'
+                    ? 'cancel'
+                    : 'hourglass-empty'
+                }
+                size={20}
+                color={getBackgroundCheckColor(item.backgroundCheckStatus)}
+              />
+              <Text style={styles.verificationText}>Background Check</Text>
+            </View>
+          </View>
+
+          {item.rejectionReason && (
+            <View style={styles.rejectionReasonContainer}>
+              <Icon name="info" size={16} color="#ef4444" />
+              <Text style={styles.rejectionReasonText}>{item.rejectionReason}</Text>
+            </View>
           )}
         </View>
-        <View style={styles.headerInfo}>
-          <Text style={styles.driverName}>{item.driverName}</Text>
-          <Text style={styles.email}>{item.email}</Text>
-          <Text style={styles.phone}>{item.phone}</Text>
-          <TouchableOpacity
-            style={styles.viewDocsButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleViewDocuments(item);
-            }}
-          >
-            <Icon name="photo-library" size={16} color="#2563eb" />
-            <Text style={styles.viewDocsText}>
-              {item.documents.length} documents
-            </Text>
-          </TouchableOpacity>
+
+        <View style={styles.cardFooter}>
+          <Text style={styles.dateText}>Registered: {formatDate(item.createdAt)}</Text>
+          {item.RegistrationStatus === 'pending' && (
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={styles.approveButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleApprove(item._id);
+                }}
+              >
+                <Icon name="check" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.rejectButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleReject(item._id);
+                }}
+              >
+                <Icon name="close" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
-        </View>
-      </View>
+      </TouchableOpacity>
+    );
+  };
 
-      <View style={styles.divider} />
+  const renderDocumentModal = () => {
+    if (!selectedRegistration) return null;
+    
+    const documents = getDocuments(selectedRegistration);
+    
+    return (
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Documents - {getFullName(selectedRegistration)}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setModalVisible(false);
+                  setSelectedDocument(null);
+                }}
+                style={styles.closeButton}
+              >
+                <Icon name="close" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
 
-      <View style={styles.cardBody}>
-        <View style={styles.infoRow}>
-          <Icon name="directions-car" size={20} color="#6b7280" />
-          <Text style={styles.infoText}>
-            {item.vehicleYear} {item.vehicleMake} {item.vehicleModel} ({item.vehicleType})
-          </Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Icon name="confirmation-number" size={20} color="#6b7280" />
-          <Text style={styles.infoText}>License Plate: {item.licensePlate}</Text>
-        </View>
-
-        <View style={styles.verificationRow}>
-          <View style={styles.verificationItem}>
-            <Icon
-              name={item.documentsVerified ? 'check-circle' : 'cancel'}
-              size={20}
-              color={item.documentsVerified ? '#10b981' : '#ef4444'}
-            />
-            <Text style={styles.verificationText}>Documents</Text>
-          </View>
-
-          <View style={styles.verificationItem}>
-            <Icon
-              name={
-                item.backgroundCheckStatus === 'approved'
-                  ? 'check-circle'
-                  : item.backgroundCheckStatus === 'failed'
-                  ? 'cancel'
-                  : 'hourglass-empty'
-              }
-              size={20}
-              color={getBackgroundCheckColor(item.backgroundCheckStatus)}
-            />
-            <Text style={styles.verificationText}>Background Check</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.cardFooter}>
-        <Text style={styles.dateText}>Registered: {formatDate(item.createdAt)}</Text>
-        {item.status === 'pending' && (
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.approveButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleApprove(item._id);
-              }}
-            >
-              <Icon name="check" size={20} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.rejectButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleReject(item._id);
-              }}
-            >
-              <Icon name="close" size={20} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderDocumentModal = () => (
-    <Modal
-      animationType="slide"
-      transparent={true}
-      visible={modalVisible}
-      onRequestClose={() => setModalVisible(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              Documents - {selectedRegistration?.driverName}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setModalVisible(false)}
-              style={styles.closeButton}
-            >
-              <Icon name="close" size={24} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
-
-          {selectedRegistration && (
             <ScrollView style={styles.modalContent}>
               {/* Current Document Image */}
               <View style={styles.documentPreviewContainer}>
                 {selectedDocument ? (
-                  <Image
-                    source={{ uri: selectedDocument }}
-                    style={styles.documentImage}
-                    resizeMode="contain"
-                  />
+                  <>
+                    <Image
+                      source={{ uri: selectedDocument.url }}
+                      style={styles.documentImage}
+                      resizeMode="contain"
+                      onError={(error) => {
+                        console.error('Failed to load document:', selectedDocument.url);
+                        console.error('Error details:', error.nativeEvent.error);
+                        Alert.alert(
+                          'Image Load Error',
+                          `Failed to load ${selectedDocument.type}. Please check if the file exists on the server.\n\nURL: ${selectedDocument.url}`
+                        );
+                      }}
+                      onLoad={() => {
+                        console.log('Document loaded successfully:', selectedDocument.url);
+                      }}
+                    />
+                    <Text style={styles.currentDocumentLabel}>{selectedDocument.type}</Text>
+                  </>
                 ) : (
                   <View style={styles.noDocumentContainer}>
                     <Icon name="image-not-supported" size={64} color="#d1d5db" />
@@ -469,38 +522,45 @@ const DriverRegistrationReportsScreen: React.FC = () => {
               </View>
 
               {/* Document List */}
-              <Text style={styles.documentsSectionTitle}>Available Documents:</Text>
+              <Text style={styles.documentsSectionTitle}>Available Documents ({documents.length}):</Text>
               <View style={styles.documentsList}>
-                {selectedRegistration.documents.map((doc, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={[
-                      styles.documentItem,
-                      selectedDocument === doc.url && styles.selectedDocumentItem,
-                    ]}
-                    onPress={() => setSelectedDocument(doc.url)}
-                  >
-                    <View style={styles.documentItemHeader}>
-                      <Icon
-                        name="description"
-                        size={20}
-                        color={doc.verified ? '#10b981' : '#f59e0b'}
-                      />
-                      <Text style={styles.documentType}>
-                        {getDocumentTypeLabel(doc.type)}
+                {documents.length > 0 ? (
+                  documents.map((doc, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.documentItem,
+                        selectedDocument?.url === doc.url && styles.selectedDocumentItem,
+                      ]}
+                      onPress={() => {
+                        console.log('Selecting document:', doc.type, doc.url);
+                        setSelectedDocument(doc);
+                      }}
+                    >
+                      <View style={styles.documentItemHeader}>
+                        <Icon
+                          name="description"
+                          size={20}
+                          color={selectedDocument?.url === doc.url ? "#2563eb" : "#6b7280"}
+                        />
+                        <Text style={styles.documentType}>
+                          {doc.type}
+                        </Text>
+                        {selectedDocument?.url === doc.url && (
+                          <Icon name="check-circle" size={20} color="#2563eb" />
+                        )}
+                      </View>
+                      <Text style={styles.documentHint}>
+                        Tap to view
                       </Text>
-                      {doc.verified && (
-                        <Icon name="verified" size={16} color="#10b981" />
-                      )}
-                    </View>
-                    <Text style={styles.documentStatus}>
-                      Status: {doc.verified ? 'Verified' : 'Pending'}
-                    </Text>
-                    <Text style={styles.documentDate}>
-                      Uploaded: {formatDate(doc.uploadedAt)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                    </TouchableOpacity>
+                  ))
+                ) : (
+                  <View style={styles.noDocumentsContainer}>
+                    <Icon name="folder-open" size={48} color="#d1d5db" />
+                    <Text style={styles.noDocumentsText}>No documents uploaded</Text>
+                  </View>
+                )}
               </View>
 
               {/* Driver Info Summary */}
@@ -508,36 +568,56 @@ const DriverRegistrationReportsScreen: React.FC = () => {
                 <Text style={styles.summaryTitle}>Driver Information</Text>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Name:</Text>
-                  <Text style={styles.summaryValue}>{selectedRegistration.driverName}</Text>
+                  <Text style={styles.summaryValue}>{getFullName(selectedRegistration)}</Text>
                 </View>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Email:</Text>
                   <Text style={styles.summaryValue}>{selectedRegistration.email}</Text>
                 </View>
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Vehicle:</Text>
-                  <Text style={styles.summaryValue}>
-                    {selectedRegistration.vehicleMake} {selectedRegistration.vehicleModel}
-                  </Text>
+                  <Text style={styles.summaryLabel}>Phone:</Text>
+                  <Text style={styles.summaryValue}>{selectedRegistration.phoneNumber}</Text>
                 </View>
+                {selectedRegistration.sapiId && (
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>SAPI ID:</Text>
+                    <Text style={styles.summaryValue}>{selectedRegistration.sapiId}</Text>
+                  </View>
+                )}
+                {selectedRegistration.vehicleMake && (
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Vehicle:</Text>
+                    <Text style={styles.summaryValue}>
+                      {selectedRegistration.vehicleYear && `${selectedRegistration.vehicleYear} `}
+                      {selectedRegistration.vehicleMake} {selectedRegistration.vehicleModel}
+                    </Text>
+                  </View>
+                )}
+                {selectedRegistration.licensePlate && (
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Plate:</Text>
+                    <Text style={styles.summaryValue}>{selectedRegistration.licensePlate}</Text>
+                  </View>
+                )}
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Status:</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedRegistration.status) }]}>
-                    <Text style={styles.statusText}>{selectedRegistration.status.toUpperCase()}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedRegistration.RegistrationStatus) }]}>
+                    <Text style={styles.statusText}>{selectedRegistration.RegistrationStatus.toUpperCase()}</Text>
                   </View>
                 </View>
               </View>
             </ScrollView>
-          )}
+          </View>
         </View>
-      </View>
-    </Modal>
-  );
+      </Modal>
+    );
+  };
 
   if (loading) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading driver registrations...</Text>
       </View>
     );
   }
@@ -562,19 +642,19 @@ const DriverRegistrationReportsScreen: React.FC = () => {
       <View style={styles.statsContainer}>
         <View style={styles.statCard}>
           <Text style={styles.statNumber}>
-            {registrations.filter((r) => r.status === 'pending').length}
+            {registrations.filter((r) => r.RegistrationStatus === 'pending').length}
           </Text>
           <Text style={styles.statLabel}>Pending</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: '#10b981' }]}>
-            {registrations.filter((r) => r.status === 'approved').length}
+            {registrations.filter((r) => r.RegistrationStatus === 'approved').length}
           </Text>
           <Text style={styles.statLabel}>Approved</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: '#ef4444' }]}>
-            {registrations.filter((r) => r.status === 'rejected').length}
+            {registrations.filter((r) => r.RegistrationStatus === 'rejected').length}
           </Text>
           <Text style={styles.statLabel}>Rejected</Text>
         </View>
@@ -592,6 +672,7 @@ const DriverRegistrationReportsScreen: React.FC = () => {
           <View style={styles.emptyContainer}>
             <Icon name="person-add" size={64} color="#d1d5db" />
             <Text style={styles.emptyText}>No driver registrations found</Text>
+            <Text style={styles.emptySubText}>Pull down to refresh</Text>
           </View>
         }
       />
@@ -610,6 +691,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6b7280',
   },
   header: {
     flexDirection: 'row',
@@ -696,7 +783,6 @@ const styles = StyleSheet.create({
   profileImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 28,
   },
   headerInfo: {
     flex: 1,
@@ -717,6 +803,11 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginTop: 2,
   },
+  sapiId: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
   viewDocsButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -731,6 +822,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
+    alignSelf: 'flex-start',
   },
   statusText: {
     fontSize: 10,
@@ -754,6 +846,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     marginLeft: 8,
+    flex: 1,
   },
   verificationRow: {
     flexDirection: 'row',
@@ -768,6 +861,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
     marginLeft: 6,
+  },
+  rejectionReasonContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#fef2f2',
+    borderRadius: 6,
+  },
+  rejectionReasonText: {
+    fontSize: 12,
+    color: '#ef4444',
+    marginLeft: 6,
+    flex: 1,
   },
   cardFooter: {
     flexDirection: 'row',
@@ -810,6 +917,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#9ca3af',
     marginTop: 12,
+    fontWeight: '500',
+  },
+  emptySubText: {
+    fontSize: 14,
+    color: '#d1d5db',
+    marginTop: 4,
   },
   // Modal Styles
   modalOverlay: {
@@ -821,7 +934,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '80%',
+    height: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -835,6 +948,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#111827',
+    flex: 1,
   },
   closeButton: {
     padding: 4,
@@ -844,17 +958,30 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   documentPreviewContainer: {
-    height: 200,
+    height: 300,
     backgroundColor: '#f9fafb',
     borderRadius: 12,
     marginBottom: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   documentImage: {
     width: '100%',
     height: '100%',
     borderRadius: 12,
+  },
+  currentDocumentLabel: {
+    position: 'absolute',
+    bottom: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    color: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: '600',
   },
   noDocumentContainer: {
     alignItems: 'center',
@@ -862,6 +989,7 @@ const styles = StyleSheet.create({
   noDocumentText: {
     marginTop: 8,
     color: '#9ca3af',
+    fontSize: 14,
   },
   documentsSectionTitle: {
     fontSize: 16,
@@ -877,7 +1005,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: '#e5e7eb',
   },
   selectedDocumentItem: {
@@ -896,20 +1024,28 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
-  documentStatus: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  documentDate: {
+  documentHint: {
     fontSize: 11,
     color: '#9ca3af',
-    marginTop: 2,
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginLeft: 28,
+  },
+  noDocumentsContainer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  noDocumentsText: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginTop: 8,
   },
   driverInfoSummary: {
     backgroundColor: '#f9fafb',
     padding: 16,
     borderRadius: 12,
     marginTop: 20,
+    marginBottom: 20,
   },
   summaryTitle: {
     fontSize: 16,
@@ -920,12 +1056,13 @@ const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   summaryLabel: {
     fontSize: 14,
     color: '#6b7280',
     width: 80,
+    fontWeight: '500',
   },
   summaryValue: {
     fontSize: 14,

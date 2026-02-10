@@ -23,6 +23,7 @@ export default function Index() {
   const [modalType, setModalType] = useState<"success" | "error" | "warning">("success");
   const [modalMessage, setModalMessage] = useState("");
   const [userRole, setUserRole] = useState<string | null>(null);
+  const base_url  = process.env.EXPO_PUBLIC_API_URL ?? '';
 
   const showModal = (type: "success" | "error" | "warning", message: string) => {
     setModalType(type);
@@ -38,6 +39,8 @@ export default function Index() {
         router.replace("/driverHome");
       } else if (userRole === "commuter") {
         router.replace("/userHome");
+      } else if (userRole === "admin") {
+        router.replace("/reportList");
       } else {
         // Default fallback
         router.replace("/userHome");
@@ -62,7 +65,7 @@ export default function Index() {
     setIsLoading(true);
 
     try {
-      const res = await fetch("http://192.168.100.37:5000/api/auth/login", {
+      const res = await fetch( base_url + "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: 'include',

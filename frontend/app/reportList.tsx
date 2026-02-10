@@ -45,7 +45,7 @@ const ReportListScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
   // API Base URL - Update with your actual backend URL
-const API_BASE_URL = 'http://192.168.100.37:5000/api/reports';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
 
   useEffect(() => {
     fetchReports();
@@ -54,7 +54,7 @@ const API_BASE_URL = 'http://192.168.100.37:5000/api/reports';
   const fetchReports = async (): Promise<void> => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/`, {
+      const response = await fetch(`${API_BASE_URL}/api/reports/`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

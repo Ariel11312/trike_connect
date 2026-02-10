@@ -81,7 +81,7 @@ const ReportDetails = () => {
 
     setLoading(true);
     try {
-      const API_BASE_URL = 'http://192.168.100.37:5000';
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
 
       console.log('Banning user:', {
         userId: report.driverId,

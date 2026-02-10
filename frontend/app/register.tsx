@@ -97,7 +97,7 @@ export default function Register() {
 
     setIsSendingCode(true);
     try {
-      const res = await fetch("http://192.168.100.37:5000/api/auth/send-verification", {
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -120,7 +120,7 @@ export default function Register() {
     if (!verificationCode) return showModal("error", "Enter code");
     setIsLoading(true);
     try {
-      const res = await fetch("http://192.168.100.37:5000/api/auth/verify-code", {
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code: verificationCode }),
@@ -189,7 +189,7 @@ export default function Register() {
   const verifyIDCard = async (base64Image: string) => {
     setIsVerifyingID(true);
     try {
-      const res = await fetch("http://192.168.100.37:5000/api/auth/verify-id", {
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/verify-id`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idImage: `data:image/jpeg;base64,${base64Image}` }),
@@ -256,7 +256,7 @@ export default function Register() {
         body.address = detectedAddress;
       }
 
-      const res = await fetch("http://192.168.100.37:5000/api/auth/signup", {
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

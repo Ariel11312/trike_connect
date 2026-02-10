@@ -174,7 +174,7 @@ export default function UserHome() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResults, setSearchResults] = useState<FareMatrixEntry[]>([]);
-
+  const base_url = process.env.EXPO_PUBLIC_API_URL
   // Route line coordinates
   const [routeCoordinates, setRouteCoordinates] = useState<
     { latitude: number; longitude: number }[]
@@ -195,14 +195,14 @@ export default function UserHome() {
   // Function to find matching destination in fare matrix from address
   const findDestinationFromAddress = (addressName: string): FareMatrixEntry | null => {
     const address = addressName.toLowerCase();
-    
+
     // Try to find exact match
     for (const entry of FARE_MATRIX) {
       if (address.includes(entry.destination.toLowerCase())) {
         return entry;
       }
     }
-    
+
     return null;
   };
 
@@ -236,14 +236,14 @@ export default function UserHome() {
       );
 
       // Get the base fare for the dropoff destination
-      const dropoffEntry = FARE_MATRIX.find(e => 
+      const dropoffEntry = FARE_MATRIX.find(e =>
         e.destination.toLowerCase() === dropoffDestination.destination.toLowerCase() &&
         (e.toda === toda || e.toda === "All TODA")
       );
 
       if (dropoffEntry) {
         const baseFare = passType === 'senior_pwd' ? dropoffEntry.seniorPwdFare : dropoffEntry.regularFare;
-        
+
         // If distance is significant (> 2km), calculate proportional fare
         if (distanceKm > 2) {
           // Use ₱15/km as base rate for cross-location trips
@@ -260,13 +260,13 @@ export default function UserHome() {
 
     // Case 2: Only dropoff is in the matrix (pickup is somewhere else in Baliuag)
     if (dropoffDestination) {
-      const entry = FARE_MATRIX.find(e => 
+      const entry = FARE_MATRIX.find(e =>
         e.destination.toLowerCase() === dropoffDestination.destination.toLowerCase() &&
         (e.toda === toda || e.toda === "All TODA")
       );
 
       if (entry) {
-        return { 
+        return {
           fare: passType === 'senior_pwd' ? entry.seniorPwdFare : entry.regularFare,
           calculationType: 'matrix'
         };
@@ -364,7 +364,7 @@ export default function UserHome() {
         return;
       }
 
-      const res = await fetch(`http://192.168.100.37:5000/api/auth/user/${driverIdOrObject}`, {
+      const res = await fetch(`${base_url}/api/auth/user/${driverIdOrObject}`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -519,7 +519,7 @@ export default function UserHome() {
   }, [currentRide, isWaitingForDriver, pickupLocation, dropoffLocation, distance, fare, selectedTodaName, passengerType, isRestoringState]);
 
   useEffect(() => {
-    fetch('http://192.168.100.37:5000/api/auth/me', {
+    fetch(`${base_url}/api/auth/me`, {
       method: 'GET',
       credentials: 'include',
       headers: {
@@ -551,7 +551,7 @@ export default function UserHome() {
 
     const checkRideStatus = async () => {
       try {
-        const res = await fetch(`http://192.168.100.37:5000/api/rides/${currentRide._id}`, {
+        const res = await fetch(`${base_url}/api/rides/${currentRide._id}`, {
           method: 'GET',
           credentials: 'include',
           headers: {
@@ -692,6 +692,51 @@ export default function UserHome() {
     return Math.round(distance * 100) / 100;
   };
 
+
+
+  const handleLogout = async () => {
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Clear any ongoing ride state
+              await Promise.all([
+                AsyncStorage.removeItem(STORAGE_KEYS.CURRENT_RIDE),
+                AsyncStorage.removeItem(STORAGE_KEYS.IS_WAITING),
+                AsyncStorage.removeItem(STORAGE_KEYS.BOOKING_DATA),
+              ]);
+
+              // Call logout API
+              await fetch(`${base_url}/api/auth/logout`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              // Navigate to login/welcome screen
+              router.replace('/');
+            } catch (error) {
+              console.error('Error during logout:', error);
+              Alert.alert("Error", "Failed to logout. Please try again.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+
   const handleSearch = (query: string) => {
     setSearchQuery(query);
 
@@ -745,10 +790,10 @@ export default function UserHome() {
           selectedTodaName,
           passengerType
         );
-        
+
         if (calculatedFare > 0) {
           setFare(calculatedFare);
-          
+
           // Show info about calculation type
           if (calculationType === 'cross-location') {
             console.log(`💰 Fare calculated based on distance between ${pickupLocation} and ${location.destination}`);
@@ -809,7 +854,7 @@ export default function UserHome() {
       if (currentLocation) {
         getDirections(currentLocation, dropoffLoc);
         fitMapToMarkers(currentLocation, dropoffLoc);
-        
+
         // Calculate fare based on locations
         if (selectedTodaName) {
           const { fare: calculatedFare } = calculateFareFromMatrix(
@@ -978,7 +1023,7 @@ export default function UserHome() {
     }
 
     try {
-      const res = await fetch("http://192.168.100.37:5000/api/rides/book", {
+      const res = await fetch(`${base_url}/api/rides/book`, {
         method: "POST",
         credentials: 'include',
         headers: {
@@ -1023,7 +1068,7 @@ export default function UserHome() {
 
   const handleCancelRide = async () => {
     try {
-      const res = await fetch(`http://192.168.100.37:5000/api/rides/${currentRide._id}/cancel`, {
+      const res = await fetch(`${base_url}/api/rides/${currentRide._id}/cancel`, {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -1069,7 +1114,7 @@ export default function UserHome() {
     try {
       const otherUserId = assignedDriver._id;
 
-      const response = await fetch('http://192.168.100.37:5000/api/chat/create-new-chat', {
+      const response = await fetch(`${base_url}/api/chat/create-new-chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1129,7 +1174,7 @@ export default function UserHome() {
     setIsSubmittingReport(true);
 
     try {
-      const res = await fetch('http://192.168.100.37:5000/api/reports/driver', {
+      const res = await fetch(`${base_url}/api/reports/driver`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -1221,14 +1266,20 @@ export default function UserHome() {
         </MapView>
 
         {/* User Info Card */}
-        <View style={styles.userCard}>
-          <Text style={styles.emoji}>👋</Text>
-          <Text style={styles.userName}>
-            {user ? `${user.firstname} ${user.lastname}` : "Loading..."}
-          </Text>
-        </View>
-
-        {/* Distance Card */}
+    <View style={styles.userCardContainer}>
+  <View style={styles.userCard}>
+    <Text style={styles.emoji}>👋</Text>
+    <Text style={styles.userName}>
+      {user ? `${user.firstname} ${user.lastname}` : "Loading..."}
+    </Text>
+  </View>
+  <TouchableOpacity
+    style={styles.logoutButton}
+    onPress={handleLogout}
+  >
+    <Text style={styles.logoutIcon}>🚪</Text>
+  </TouchableOpacity>
+</View>     {/* Distance Card */}
         {distance > 0 && !isWaitingForDriver && (
           <View style={styles.distanceCard}>
             <Text style={styles.distanceLabel}>Distance to Destination</Text>
@@ -1763,22 +1814,30 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  userCard: {
-    position: "absolute",
-    top: 60,
-    left: 20,
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    flexDirection: "row",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
+userCard: {
+  flex: 1,  // Add this
+  backgroundColor: "#fff",
+  paddingHorizontal: 20,
+  paddingVertical: 12,
+  borderRadius: 25,
+  flexDirection: "row",
+  alignItems: "center",
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 8,
+  elevation: 5,
+},
+userCardContainer: {
+  position: "absolute",
+  top: 60,
+  left: 20,
+  right: 20,
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  zIndex: 100,
+},
   emoji: {
     fontSize: 24,
     marginRight: 8,
@@ -2586,4 +2645,21 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
+  logoutButton: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 25,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 2,
+    borderColor: "#F44336",
+  },
+  logoutIcon: {
+    fontSize: 20,
+  },
+
 });

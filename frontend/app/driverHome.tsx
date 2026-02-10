@@ -76,8 +76,8 @@ const STORAGE_KEYS = {
 };
 
 // CONFIGURATION
-const SOCKET_URL = 'http://192.168.100.37:5000';
-const API_URL = 'http://192.168.100.37:5000';
+const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL;
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 // CODING SCHEME HELPER FUNCTIONS
 const getCodingDigitsForDay = (dayOfWeek: number): number[] => {
@@ -423,7 +423,56 @@ export default function DriverHome() {
       setIsLoadingPassengerInfo(false);
     }
   };
+const handleLogout = async () => {
+  Alert.alert(
+    "Logout",
+    "Are you sure you want to logout?",
+    [
+      {
+        text: "Cancel",
+        style: "cancel"
+      },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            // Disconnect socket if connected
+            if (socketRef.current?.connected) {
+              console.log('🔌 Disconnecting socket on logout');
+              socketRef.current.disconnect();
+            }
 
+            // Clear ride state
+            await Promise.all([
+              AsyncStorage.removeItem(STORAGE_KEYS.ACTIVE_RIDE),
+              AsyncStorage.removeItem(STORAGE_KEYS.RIDE_PHASE),
+              AsyncStorage.removeItem(STORAGE_KEYS.LAST_READ_MESSAGE),
+            ]);
+
+            // Call logout API
+            await fetch(`${API_URL}/api/auth/logout`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            });
+
+            // Stop location tracking
+            stopLocationTracking();
+
+            // Navigate to login/welcome screen
+            router.replace('/');
+          } catch (error) {
+            console.error('Error during logout:', error);
+            Alert.alert("Error", "Failed to logout. Please try again.");
+          }
+        }
+      }
+    ]
+  );
+};
   const handleCallPassenger = () => {
     console.log('📞 handleCallPassenger called');
     console.log('📊 passengerInfo:', passengerInfo);
@@ -1492,6 +1541,12 @@ export default function DriverHome() {
           >
             <Text style={styles.historyButtonText}>📋</Text>
           </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.logoutButton}
+              onPress={handleLogout}
+            >
+              <Text style={styles.logoutIcon}>🚪</Text>
+            </TouchableOpacity>
         </View>
 
         {activeRide && (
@@ -1917,9 +1972,28 @@ const styles = StyleSheet.create({
   historyButton: {
     marginLeft: 12,
     paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   historyButtonText: {
     fontSize: 20,
+  },
+  logoutButton: {
+    marginLeft: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 2,
+    borderColor: "#F44336",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  logoutIcon: {
+    fontSize: 18,
+    color: "#F44336",
   },
   activeRideCard: {
     position: "absolute",

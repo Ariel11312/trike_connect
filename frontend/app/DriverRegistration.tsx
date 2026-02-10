@@ -11,31 +11,17 @@ import {
   Modal,
   Alert,
   ScrollView,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
 
 // ==================== API CONFIGURATION ====================
-// IMPORTANT: Update these URLs based on your environment:
-// For Physical Device on same network: Use your computer's local IP
-const API_BASE_URL = 'http://192.168.100.37:5000/api';
-const UPLOADS_BASE_URL = 'http://192.168.100.37:5000/uploads';
+const API_BASE_URL = `${process.env.EXPO_PUBLIC_API_URL}/api`;
+const UPLOADS_BASE_URL = `${process.env.EXPO_PUBLIC_API_URL}/uploads`;
 
-// For Android Emulator, use:
-// const API_BASE_URL = 'http://10.0.2.2:5000/api';
-// const UPLOADS_BASE_URL = 'http://10.0.2.2:5000/uploads';
-
-// For iOS Simulator, use:
-// const API_BASE_URL = 'http://localhost:5000/api';
-// const UPLOADS_BASE_URL = 'http://localhost:5000/uploads';
-
-// For Production, use:
-// const API_BASE_URL = 'https://your-api-domain.com/api';
-// const UPLOADS_BASE_URL = 'https://your-api-domain.com/uploads';
-// ===========================================================
-
-// Type definitions matching backend User model
+// Type definitions
 type RegistrationStatus = 'pending' | 'approved' | 'rejected';
 
 interface DriverUser {
@@ -49,17 +35,15 @@ interface DriverUser {
   profilePicture?: string;
   sapiId?: string;
   
-  // Vehicle information
   vehicleType?: string;
   vehicleMake?: string;
   vehicleModel?: string;
   vehicleYear?: number;
   licensePlate?: string;
   
-  // Documents and verification
   idFront?: string;
   idBack?: string;
-  idCardImage?: string; // Changed from driversLicense to idCardImage
+  idCardImage?: string;
   vehicleRegistration?: string;
   insurance?: string;
   
@@ -71,28 +55,21 @@ interface DriverUser {
   updatedAt: string;
 }
 
-/**
- * Helper function to construct full image URLs from file paths
- * Handles both relative paths and full URLs
- */
 const getImageUrl = (imagePath?: string): string | undefined => {
   if (!imagePath) {
     console.log('No image path provided');
     return undefined;
   }
   
-  // If the path is already a full URL, return it as is
   if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
     console.log('Full URL detected:', imagePath);
     return imagePath;
   }
   
-  // Remove any leading slashes, backslashes, or "uploads/" prefix
   let cleanPath = imagePath
-    .replace(/^[\/\\]+/, '')           // Remove leading slashes
-    .replace(/^uploads[\/\\]/, '');    // Remove "uploads/" prefix if exists
+    .replace(/^[\/\\]+/, '')
+    .replace(/^uploads[\/\\]/, '');
   
-  // Construct full URL
   const fullUrl = `${UPLOADS_BASE_URL}/${cleanPath}`;
   console.log('Constructed image URL:', fullUrl);
   
@@ -107,6 +84,11 @@ const DriverRegistrationReportsScreen: React.FC = () => {
   const [selectedRegistration, setSelectedRegistration] = useState<DriverUser | null>(null);
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [selectedDocument, setSelectedDocument] = useState<{ type: string; url: string } | null>(null);
+  
+  // Rejection modal states
+  const [rejectModalVisible, setRejectModalVisible] = useState<boolean>(false);
+  const [rejectionReason, setRejectionReason] = useState<string>('');
+  const [userIdToReject, setUserIdToReject] = useState<string>('');
 
   useEffect(() => {
     fetchRegistrations();
@@ -130,7 +112,6 @@ const DriverRegistrationReportsScreen: React.FC = () => {
       if (response.ok && data.success) {
         setRegistrations(data.data);
         
-        // Log image paths for debugging
         data.data.forEach((reg: DriverUser) => {
           if (reg.profilePicture) {
             console.log(`Profile picture for ${reg.firstName}:`, reg.profilePicture);
@@ -258,7 +239,7 @@ const DriverRegistrationReportsScreen: React.FC = () => {
 
               if (response.ok && data.success) {
                 Alert.alert('Success', 'Driver registration approved successfully!');
-                fetchRegistrations(); // Refresh the list
+                fetchRegistrations();
               } else {
                 throw new Error(data.message || 'Failed to approve registration');
               }
@@ -275,48 +256,106 @@ const DriverRegistrationReportsScreen: React.FC = () => {
     );
   };
 
-  const handleReject = async (userId: string): Promise<void> => {
-    Alert.prompt(
-      'Reject Registration',
-      'Please provide a reason for rejection:',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async (reason) => {
-            try {
-              const response = await fetch(`${API_BASE_URL}/driver-registrations/${userId}/reject`, {
-                method: 'PUT',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  reason: reason || 'Registration did not meet requirements'
-                }),
-              });
-
-              const data = await response.json();
-
-              if (response.ok && data.success) {
-                Alert.alert('Success', 'Driver registration rejected.');
-                fetchRegistrations(); // Refresh the list
-              } else {
-                throw new Error(data.message || 'Failed to reject registration');
-              }
-            } catch (error: any) {
-              console.error('Error rejecting registration:', error);
-              Alert.alert(
-                'Error',
-                error.message || 'Failed to reject registration'
-              );
-            }
-          },
-        },
-      ],
-      'plain-text'
-    );
+  const handleReject = (userId: string): void => {
+    setUserIdToReject(userId);
+    setRejectionReason('');
+    setRejectModalVisible(true);
   };
+
+  const submitRejection = async (): Promise<void> => {
+    if (!rejectionReason.trim()) {
+      Alert.alert('Error', 'Please provide a reason for rejection');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/driver-registrations/${userIdToReject}/reject`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reason: rejectionReason.trim()
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        Alert.alert('Success', 'Driver registration rejected.');
+        setRejectModalVisible(false);
+        setRejectionReason('');
+        setUserIdToReject('');
+        fetchRegistrations();
+      } else {
+        throw new Error(data.message || 'Failed to reject registration');
+      }
+    } catch (error: any) {
+      console.error('Error rejecting registration:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to reject registration'
+      );
+    }
+  };
+
+  const renderRejectionModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={rejectModalVisible}
+      onRequestClose={() => setRejectModalVisible(false)}
+    >
+      <View style={styles.rejectionModalOverlay}>
+        <View style={styles.rejectionModalContent}>
+          <View style={styles.rejectionModalHeader}>
+            <Text style={styles.rejectionModalTitle}>Reject Registration</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setRejectModalVisible(false);
+                setRejectionReason('');
+              }}
+            >
+              <Icon name="close" size={24} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.rejectionModalLabel}>
+            Please provide a reason for rejecting this driver registration:
+          </Text>
+
+          <TextInput
+            style={styles.rejectionInput}
+            placeholder="e.g., Invalid documents, Incomplete information..."
+            value={rejectionReason}
+            onChangeText={setRejectionReason}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+
+          <View style={styles.rejectionModalButtons}>
+            <TouchableOpacity
+              style={styles.rejectionCancelButton}
+              onPress={() => {
+                setRejectModalVisible(false);
+                setRejectionReason('');
+              }}
+            >
+              <Text style={styles.rejectionCancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.rejectionSubmitButton}
+              onPress={submitRejection}
+            >
+              <Text style={styles.rejectionSubmitButtonText}>Reject</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   const renderRegistrationItem = ({ item }: { item: DriverUser }) => {
     const documents = getDocuments(item);
@@ -329,7 +368,6 @@ const DriverRegistrationReportsScreen: React.FC = () => {
         onPress={() => handleViewDocuments(item)}
       >
         <View style={styles.cardHeader}>
-          <Stack.Screen options={{ headerShown: false }} />
           <View style={styles.avatarContainer}>
             {profileImageUrl ? (
               <Image
@@ -491,7 +529,6 @@ const DriverRegistrationReportsScreen: React.FC = () => {
             </View>
 
             <ScrollView style={styles.modalContent}>
-              {/* Current Document Image */}
               <View style={styles.documentPreviewContainer}>
                 {selectedDocument ? (
                   <>
@@ -521,7 +558,6 @@ const DriverRegistrationReportsScreen: React.FC = () => {
                 )}
               </View>
 
-              {/* Document List */}
               <Text style={styles.documentsSectionTitle}>Available Documents ({documents.length}):</Text>
               <View style={styles.documentsList}>
                 {documents.length > 0 ? (
@@ -563,7 +599,6 @@ const DriverRegistrationReportsScreen: React.FC = () => {
                 )}
               </View>
 
-              {/* Driver Info Summary */}
               <View style={styles.driverInfoSummary}>
                 <Text style={styles.summaryTitle}>Driver Information</Text>
                 <View style={styles.summaryRow}>
@@ -624,6 +659,7 @@ const DriverRegistrationReportsScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
@@ -678,6 +714,7 @@ const DriverRegistrationReportsScreen: React.FC = () => {
       />
 
       {renderDocumentModal()}
+      {renderRejectionModal()}
     </SafeAreaView>
   );
 };
@@ -1068,6 +1105,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     flex: 1,
+  },
+  // Rejection Modal Styles
+  rejectionModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  rejectionModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+  },
+  rejectionModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  rejectionModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  rejectionModalLabel: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 12,
+  },
+  rejectionInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    minHeight: 100,
+    marginBottom: 20,
+  },
+  rejectionModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  rejectionCancelButton: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  rejectionCancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  rejectionSubmitButton: {
+    flex: 1,
+    backgroundColor: '#ef4444',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  rejectionSubmitButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
 

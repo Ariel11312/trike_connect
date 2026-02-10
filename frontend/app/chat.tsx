@@ -59,8 +59,8 @@ interface TypingData {
 import { createNewChat, getAllChats } from '../services/ChatService';
 
 // CONFIGURATION - Update these values
-const SOCKET_URL = 'http://192.168.100.37:5000'; // Make sure this matches your server
-const API_URL = 'http://192.168.100.37:5000';
+const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL; // Make sure this matches your server
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const ChatInterface: React.FC = () => {
   const [message, setMessage] = useState<string>('');

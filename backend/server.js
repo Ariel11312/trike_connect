@@ -8,6 +8,7 @@ import chatRoutes from './Controllers/chatController.js';
 import messageRoutes from './Controllers/messageController.js';
 import connectDB from "./database/db.js";
 import authRoutes from "./routes/authRoute.js";
+import passwordRoutes from "./routes/passwordRoute.js";
 import reportRoutes from "./routes/reportRoute.js";
 import rideRoutes from "./routes/rideRoute.js";
 import cookieParser from "cookie-parser";
@@ -67,6 +68,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/reports", reportRoutes);
 app.use('/api/driver-registrations', driverRegistrationRoutes);
+app.use('/api/password', passwordRoutes);
 // Health check
 app.get("/health", (req, res) => {
   res.status(200).json({ success: true, message: "Server is running" });

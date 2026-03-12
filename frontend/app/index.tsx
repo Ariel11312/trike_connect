@@ -41,9 +41,13 @@ export default function Index() {
         router.replace("/userHome");
       } else if (userRole === "admin") {
         router.replace("/reportList");
-      } else {
+      }
+       else if (userRole === "dishpatcher") {
+        router.replace("/dispatcher");
+      }
+      else {
         // Default fallback
-        router.replace("/userHome");
+        router.replace("/dispatcher");
       }
     }
   };

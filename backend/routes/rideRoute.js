@@ -20,7 +20,7 @@ router.post('/book', protect, bookRide);
 router.get('/toda-names', getTodaNames);
 router.get('/user/:userId', protect, getUserRides);
 router.get('/:id', protect, getRideById);
-router.get('/', protect, getAllRides);
+router.get('/', getAllRides);
 
 // Update routes
 router.put('/:id/status', protect, updateRideStatus);

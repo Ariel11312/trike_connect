@@ -169,11 +169,7 @@ export const getAllRides = async (req, res) => {
     const { status, todaName, page = 1, limit = 10 } = req.query;
 
     const query = {};
-
-    if (status) query.status = status;
-    if (todaName) query.todaName = todaName;
-    
-    const rides = await Ride.find(query)
+    const rides = await Ride.find({todaName:todaName,status:status})
       .sort({ createdAt: -1 })
       .limit(Number(limit))
       .skip((Number(page) - 1) * Number(limit))
@@ -211,7 +207,7 @@ export const updateRideStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ['pending', 'accepted', 'in-progress', 'completed', 'cancelled'];
+    const validStatuses = ['pending', 'accepted', 'in-progress','pending_confirmation', 'completed', 'cancelled'];
     
     if (!validStatuses.includes(status)) {
       return res.status(400).json({

@@ -330,6 +330,9 @@ export const getMe = async (req, res) => {
           address: user.address,
           idCardImage: user.idCardImage,
         }),
+          ...(user.role === 'dispatcher' && {
+          todaName: user.todaName,
+        }),
       },
     });
   } catch (error) {
@@ -474,5 +477,174 @@ export const getAllUsers = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+};
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THESE TWO FUNCTIONS TO THE BOTTOM OF YOUR authController.js
+// ─────────────────────────────────────────────────────────────────────────────
+
+// @desc    Update logged-in user's profile
+// @route   PATCH /api/auth/update-profile
+// @access  Private (requires protect middleware)
+export const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Fields the user is allowed to update
+    const allowedFields = [
+      'firstName',
+      'lastName',
+      'phoneNumber',
+      'address',
+      // Driver-specific
+      'todaName',
+      'licensePlate',
+      'driversLicense',
+      'sapiId',
+    ];
+
+    // Build update object — only include fields that were actually sent
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined && req.body[field] !== null) {
+        // Uppercase plate / license fields for consistency
+        if (['licensePlate', 'driversLicense', 'sapiId'].includes(field)) {
+          updates[field] = String(req.body[field]).toUpperCase().trim();
+        } else {
+          updates[field] = String(req.body[field]).trim();
+        }
+      }
+    }
+
+    // Validate phone if it's being updated
+    if (updates.phoneNumber) {
+      try {
+        updates.phoneNumber = validateAndFormatPhoneNumber(updates.phoneNumber);
+      } catch (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+
+      // Make sure the new number isn't already taken by someone else
+      const existing = await User.findOne({
+        phoneNumber: updates.phoneNumber,
+        _id: { $ne: userId },
+      });
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: 'Phone number is already in use by another account.',
+        });
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields provided for update.' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully.',
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        createdAt: user.createdAt,
+        RegistrationStatus: user.RegistrationStatus,
+        isBanned: user.isBanned,
+        banReason: user.banReason,
+        banUntil: user.banUntil,
+        ...(user.role === 'driver' && {
+          todaName: user.todaName,
+          licensePlate: user.licensePlate,
+          driversLicense: user.driversLicense,
+          sapiId: user.sapiId,
+          address: user.address,
+        }),
+        ...(user.role === 'dispatcher' && {
+          todaName: user.todaName,
+          address: user.address,
+        }),
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    // Handle Mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map((e) => e.message);
+      return res.status(400).json({ success: false, message: messages.join(', ') });
+    }
+    res.status(500).json({ success: false, message: 'Server error while updating profile.' });
+  }
+};
+
+// @desc    Change logged-in user's password
+// @route   PATCH /api/auth/change-password
+// @access  Private (requires protect middleware)
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    // ── Validation ──────────────────────────────────────────────────────────
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide both current and new password.',
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters long.',
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be different from your current password.',
+      });
+    }
+
+    // ── Fetch user WITH password field (select: false in schema) ────────────
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    // ── Verify current password ─────────────────────────────────────────────
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Current password is incorrect.',
+      });
+    }
+
+    // ── Set new password (pre-save hook will hash it) ───────────────────────
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully.',
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ success: false, message: 'Server error while changing password.' });
   }
 };

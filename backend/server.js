@@ -29,9 +29,9 @@ const httpServer = createServer(app);
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(httpServer, {
   cors: {
-    origin:      "http://localhost:8081",
+    origin: "*",
     credentials: true,
-    methods:     ["GET", "POST"],
+    methods: ["GET", "POST"],
   },
 });
 
@@ -47,7 +47,7 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({
-  origin:         "http://localhost:8081",
+  origin:         "*",
   credentials:    true,
   methods:        ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],

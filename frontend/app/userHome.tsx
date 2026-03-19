@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Picker } from "@react-native-picker/picker";
 import * as Location from "expo-location";
 import { router, Stack } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Keyboard,
@@ -50,6 +50,14 @@ interface MarkerDragEvent {
       longitude: number;
     };
   };
+}
+
+// ── NEW: generic place result from Nominatim ──────────────────────
+interface PlaceResult {
+  name: string;
+  displayName: string;
+  latitude: number;
+  longitude: number;
 }
 
 const STORAGE_KEYS = {
@@ -199,6 +207,59 @@ function applyCompanionSurcharge(baseFare: number, companionCount: number): numb
 }
 
 // ─────────────────────────────────────────────────────────────────
+// NOMINATIM PLACE SEARCH
+// Searches real places biased around Baliuag, Bulacan
+// ─────────────────────────────────────────────────────────────────
+const BALIUAG_LAT = 14.9550;
+const BALIUAG_LNG = 120.8900;
+
+async function searchPlaces(query: string): Promise<PlaceResult[]> {
+  if (!query.trim()) return [];
+
+  const url =
+    `https://nominatim.openstreetmap.org/search` +
+    `?format=json&limit=8&addressdetails=1&namedetails=1` +
+    `&q=${encodeURIComponent(query + " Baliuag Bulacan Philippines")}` +
+    `&countrycodes=ph` +
+    `&viewbox=120.82,15.05,120.96,14.85&bounded=0`;
+
+  const res = await fetch(url, {
+    headers: {
+      "Accept":          "application/json",
+      "Accept-Language": "en",
+      // Nominatim usage policy requires a descriptive User-Agent
+      "User-Agent":      "BaliuagTodaApp/1.0 (contact@baliuagtoda.app)",
+    },
+  });
+
+  // Guard: Nominatim sometimes returns HTML on rate-limit / bad requests
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    console.warn("Nominatim returned non-JSON response:", res.status, contentType);
+    return [];
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data)) return [];
+
+  return data.map((item: any) => {
+    // Build a short human-readable name: prefer namedetails.name, else first segment of display_name
+    const shortName =
+      item.namedetails?.name ??
+      item.namedetails?.["name:en"] ??
+      item.display_name.split(",")[0].trim();
+
+    return {
+      name:        shortName,
+      displayName: item.display_name,
+      latitude:    parseFloat(item.lat),
+      longitude:   parseFloat(item.lon),
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────────────────────────
 export default function UserHome() {
@@ -238,8 +299,13 @@ export default function UserHome() {
   });
   const [searchQuery, setSearchQuery]           = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
-  const [searchResults, setSearchResults]       = useState<FareMatrixEntry[]>([]);
+  // ── NOW PlaceResult[] instead of FareMatrixEntry[] ───────────────
+  const [searchResults, setSearchResults]       = useState<PlaceResult[]>([]);
+  const [isSearching, setIsSearching]           = useState(false);
   const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
+
+  // Debounce ref
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const base_url = process.env.EXPO_PUBLIC_API_URL;
 
@@ -725,39 +791,59 @@ export default function UserHome() {
     ]);
   };
 
+  // ── REAL PLACE SEARCH via Nominatim (debounced 400 ms) ──────────
   const handleSearch = (query: string) => {
     setSearchQuery(query);
+
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
     if (!query.trim()) {
       setSearchResults([]);
       setShowSearchResults(false);
+      setIsSearching(false);
       return;
     }
-    const filtered = FARE_MATRIX.filter((e) =>
-      e.destination.toLowerCase().includes(query.toLowerCase())
-    );
-    setSearchResults(filtered);
-    setShowSearchResults(filtered.length > 0);
+
+    setIsSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await searchPlaces(query);
+        setSearchResults(results);
+        setShowSearchResults(results.length > 0);
+      } catch (e) {
+        console.error("Place search error:", e);
+        setSearchResults([]);
+        setShowSearchResults(false);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
   };
 
-  const handleSelectSearchResult = (location: FareMatrixEntry) => {
+  // ── SELECT A REAL PLACE RESULT ───────────────────────────────────
+  const handleSelectSearchResult = (place: PlaceResult) => {
     if (isWaitingForDriver || currentRide) {
       Alert.alert("Ongoing Ride", "Please complete or cancel your current ride first.");
       return;
     }
+
     const dropoffLoc: LocationData = {
-      name: location.destination,
-      latitude: location.latitude,
-      longitude: location.longitude,
+      name: place.displayName,
+      latitude: place.latitude,
+      longitude: place.longitude,
     };
+
     setDropoffMarker(dropoffLoc);
-    setDropoffLocation(location.destination);
+    setDropoffLocation(place.displayName);
     setSearchQuery("");
     setShowSearchResults(false);
+    setSearchResults([]);
     Keyboard.dismiss();
+
     if (currentLocation) {
       if (selectedTodaName) {
         const { fare: baseFare } = calculateFareFromMatrix(
-          pickupLocation, location.destination,
+          pickupLocation, place.displayName,
           currentLocation, dropoffLoc,
           selectedTodaName, passengerType
         );
@@ -766,6 +852,7 @@ export default function UserHome() {
       getDirections(currentLocation, dropoffLoc);
       fitMapToMarkers(currentLocation, dropoffLoc);
     }
+
     if (!showBookingForm) setShowBookingForm(true);
   };
 
@@ -880,7 +967,6 @@ export default function UserHome() {
   const handleBookRide = async () => {
     if (!pickupLocation || !dropoffLocation)  { showModal("error", "Please select a dropoff location"); return; }
     if (!isInBaliuag(pickupLocation))          { showModal("error", "⚠️ Your pickup location is outside Baliuag/Baliwag coverage area."); return; }
-    if (!isInBaliuag(dropoffLocation))         { showModal("error", "⚠️ Your dropoff location is outside Baliuag/Baliwag coverage area."); return; }
     if (!selectedTodaName)                     { showModal("error", "Please select a TODA"); return; }
     if (!currentLocation || !dropoffMarker)    { showModal("error", "Location data is missing. Please try again."); return; }
     if (fare === 0)                            { showModal("error", "Unable to calculate fare. Please try again."); return; }
@@ -1349,7 +1435,7 @@ export default function UserHome() {
                     </View>
                   </View>
 
-                  {/* Dropoff */}
+                  {/* Dropoff — real place search */}
                   <View style={styles.inputContainer}>
                     <View style={styles.iconRow}>
                       <Text style={styles.icon}>🔴</Text>
@@ -1369,11 +1455,10 @@ export default function UserHome() {
                         </TouchableOpacity>
                       )}
                     </View>
-                    
-                    {/* Show selected location or search input */}
+
                     {dropoffLocation && !searchQuery ? (
                       <View style={styles.selectedLocationBox}>
-                        <Text style={styles.selectedLocationText}>{dropoffLocation}</Text>
+                        <Text style={styles.selectedLocationText} numberOfLines={2}>{dropoffLocation}</Text>
                         <TouchableOpacity
                           style={styles.changeLocationButton}
                           onPress={() => {
@@ -1386,59 +1471,56 @@ export default function UserHome() {
                         </TouchableOpacity>
                       </View>
                     ) : (
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Search destination or tap map..."
-                        value={searchQuery}
-                        onChangeText={handleSearch}
-                        onFocus={() => {
-                          if (searchQuery.length > 0) setShowSearchResults(true);
-                        }}
-                      />
+                      <View>
+                        <View style={styles.searchInputWrapper}>
+                          <TextInput
+                            style={styles.searchInput}
+                            placeholder="Search any place in Baliuag..."
+                            value={searchQuery}
+                            onChangeText={handleSearch}
+                            onFocus={() => { if (searchQuery.length > 0) setShowSearchResults(true); }}
+                            returnKeyType="search"
+                          />
+                          {isSearching && (
+                            <Text style={styles.searchingIndicator}>🔍</Text>
+                          )}
+                        </View>
+                        <Text style={styles.searchHint}>💡 Type a street, barangay, or landmark</Text>
+                      </View>
                     )}
-                    
+
+                    {/* Real search results */}
                     {showSearchResults && searchResults.length > 0 && (
                       <View style={styles.searchResults}>
-                        <ScrollView 
-                          nestedScrollEnabled 
-                          style={styles.searchScroll} 
+                        <ScrollView
+                          nestedScrollEnabled
+                          style={styles.searchScroll}
                           keyboardShouldPersistTaps="handled"
                         >
-                          {searchResults.map((loc, i) => (
-                            <TouchableOpacity 
-                              key={i} 
-                              style={styles.searchItem} 
-                              onPress={() => handleSelectSearchResult(loc)}
+                          {searchResults.map((place, i) => (
+                            <TouchableOpacity
+                              key={i}
+                              style={styles.searchItem}
+                              onPress={() => handleSelectSearchResult(place)}
                             >
                               <Text style={styles.searchIcon}>📍</Text>
                               <View style={styles.searchItemContent}>
-                                <Text style={styles.searchItemText}>{loc.destination}</Text>
-                                <Text style={styles.searchItemSubtext}>{loc.toda}</Text>
+                                <Text style={styles.searchItemText} numberOfLines={1}>{place.name}</Text>
+                                <Text style={styles.searchItemSubtext} numberOfLines={2}>{place.displayName}</Text>
                               </View>
                             </TouchableOpacity>
                           ))}
                         </ScrollView>
                       </View>
                     )}
-                  </View>
 
-                  {/* Only show Popular Destinations when there's no search query AND no location selected */}
-                  {!dropoffLocation && !searchQuery && (
-                    <View style={styles.popularContainer}>
-                      <Text style={styles.popularTitle}>Popular Destinations:</Text>
-                      <View style={styles.chipContainer}>
-                        {FARE_MATRIX.slice(0, 12).map((loc, i) => (
-                          <TouchableOpacity 
-                            key={i} 
-                            style={styles.chip} 
-                            onPress={() => handleSelectSearchResult(loc)}
-                          >
-                            <Text style={styles.chipText}>{loc.destination}</Text>
-                          </TouchableOpacity>
-                        ))}
+                    {/* No results state */}
+                    {showSearchResults && searchResults.length === 0 && !isSearching && searchQuery.trim().length > 0 && (
+                      <View style={styles.noResultsBox}>
+                        <Text style={styles.noResultsText}>No places found. Try a different keyword or tap the map.</Text>
                       </View>
-                    </View>
-                  )}
+                    )}
+                  </View>
 
                   {/* Fare Summary */}
                   {distance > 0 && fare > 0 && (
@@ -1649,193 +1731,163 @@ const styles = StyleSheet.create({
   driverInfo: { flex: 1 },
   driverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
   driverDetails: { fontSize: 14, color: "#666", marginTop: 2 },
-driverActionButtons: { flexDirection: "row", gap: 10, marginLeft: 12 },
-messageButton: { backgroundColor: "#007AFF", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
-callButton: { backgroundColor: "#28a745", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#28a745", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
-actionIcon: { fontSize: 28 },
-driverSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
-waitingSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
-actionButtonsRow: { flexDirection: "row", gap: 10 },
-reportButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-reportButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-cancelButton: { flex: 1, backgroundColor: "#F44336", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-cancelButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-cancelButtonDisabled: { flex: 1, backgroundColor: "#e0e0e0", paddingVertical: 14, borderRadius: 12, alignItems: "center", borderWidth: 1, borderColor: "#ccc" },
-cancelButtonDisabledText: { color: "#999", fontSize: 14, fontWeight: "600" },
-cancelLockedNote: { fontSize: 11, color: "#999", textAlign: "center", marginTop: 8, fontStyle: "italic" },
-recommendedSection: { marginBottom: 20, backgroundColor: "#F0F7FF", borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: "#B3D4FF" },
-recommendedHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-recommendedTitle: { fontSize: 15, fontWeight: "700", color: "#1A1A2E" },
-liveBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#34C759", gap: 4 },
-liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#34C759" },
-liveBadgeText: { fontSize: 10, fontWeight: "700", color: "#34C759", letterSpacing: 0.5 },
-recommendedSubtitle: { fontSize: 12, color: "#666", marginBottom: 14 },
-recommendedChipRow: { gap: 10 },
-recommendedChip: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 14, borderWidth: 2, paddingVertical: 12, paddingHorizontal: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2, gap: 10 },
-rankBadge: { width: 34, height: 34, borderRadius: 17, justifyContent: "center", alignItems: "center" },
-rankEmoji: { fontSize: 16 },
-recommendedChipBody: { flex: 1 },
-recommendedChipToda: { fontSize: 14, fontWeight: "700", color: "#1A1A2E", marginBottom: 1 },
-recommendedChipDesc: { fontSize: 12, color: "#888", marginBottom: 4 },
-distancePill: { alignSelf: "flex-start", backgroundColor: "#F5F5F5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-distancePillText: { fontSize: 11, fontWeight: "600" },
-selectedCheck: { width: 24, height: 24, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-selectedCheckText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-selectedTodaBadge: { marginLeft: 8, backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: "#34C759" },
-selectedTodaBadgeText: { fontSize: 11, color: "#34C759", fontWeight: "600" },
-companionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f8f9fa", borderRadius: 16, borderWidth: 1, borderColor: "#e0e0e0", padding: 8, marginBottom: 8 },
-companionBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 3 },
-companionBtnDisabled: { backgroundColor: "#c8c8c8", shadowOpacity: 0 },
-companionBtnText: { fontSize: 26, color: "#fff", fontWeight: "700", lineHeight: 30 },
-companionCountBox: { alignItems: "center", flex: 1 },
-companionCountNum: { fontSize: 36, fontWeight: "800", color: "#007AFF", lineHeight: 42 },
-companionCountLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
-companionNote: { backgroundColor: "#FFF8EC", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#FFD580", marginBottom: 10 },
-companionNoteText: { fontSize: 13, color: "#B8720A", fontWeight: "600", textAlign: "center" },
-seatRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
-seatDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
-seatDotFilled: { backgroundColor: "#007AFF", borderColor: "#007AFF" },
-seatDotEmpty: { backgroundColor: "#fff", borderColor: "#c0c0c0" },
-seatLabel: { fontSize: 12, color: "#888", marginLeft: 4 },
-reportModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", width: "100%" },
-reportModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
-reportModalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
-reportModalBody: { padding: 20, maxHeight: "70%" },
-reportDriverInfo: { backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: "#e0e0e0" },
-reportDriverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
-reportDriverDetails: { fontSize: 14, color: "#666" },
-reportSectionLabel: { fontSize: 16, fontWeight: "600", color: "#333", marginBottom: 12, marginTop: 8 },
-reportReasonsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
-reportReasonChip: { backgroundColor: "#f0f0f0", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 2, borderColor: "#e0e0e0" },
-reportReasonChipSelected: { backgroundColor: "#FFA500", borderColor: "#FFA500" },
-reportReasonText: { fontSize: 14, color: "#666", fontWeight: "500" },
-reportReasonTextSelected: { color: "#fff", fontWeight: "600" },
-reportCommentInput: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, padding: 16, fontSize: 16, minHeight: 100, backgroundColor: "#fff", marginBottom: 16 },
-reportDisclaimer: { fontSize: 13, color: "#999", fontStyle: "italic", textAlign: "center", paddingHorizontal: 10 },
-reportModalFooter: { flexDirection: "row", gap: 10, padding: 20, borderTopWidth: 1, borderTopColor: "#e0e0e0" },
-reportCancelButton: { flex: 1, backgroundColor: "#f0f0f0", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
-reportCancelButtonText: { fontSize: 16, fontWeight: "600", color: "#666" },
-reportSubmitButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
-reportSubmitButtonDisabled: { backgroundColor: "#ccc" },
-reportSubmitButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
-overlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 1000 },
-backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)" },
-keyboardAvoid: { width: "100%" },
-formContainer: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 30, paddingTop: 10, maxHeight: "90%", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
-scrollContent: { flexGrow: 1 },
-handleBar: { width: 40, height: 5, backgroundColor: "#ddd", borderRadius: 3, alignSelf: "center", marginTop: 12, marginBottom: 20 },
-title: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 12 },
-instructionText: { fontSize: 14, color: "#007AFF", backgroundColor: "#e7f3ff", padding: 12, borderRadius: 8, marginBottom: 20, textAlign: "center" },
-inputContainer: { marginBottom: 20 },
-iconRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-icon: { fontSize: 16, marginRight: 8 },
-label: { fontSize: 14, fontWeight: "600", color: "#666" },
-passengerTypeContainer: { flexDirection: "row", gap: 10 },
-passengerTypeButton: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, borderWidth: 2, borderColor: "#e0e0e0", backgroundColor: "#fff", alignItems: "center" },
-passengerTypeButtonActive: { borderColor: "#007AFF", backgroundColor: "#e7f3ff" },
-passengerTypeText: { fontSize: 14, fontWeight: "600", color: "#666", textAlign: "center" },
-passengerTypeTextActive: { color: "#007AFF" },
-pickerContainer: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, backgroundColor: "#fff", overflow: "hidden" },
-picker: { height: 50 },
-input: { height: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: "#fff" },
-readOnlyInput: { minHeight: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#f9f9f9", justifyContent: "center" },
-readOnlyText: { fontSize: 16, color: "#333" },
-selectedLocationBox: {
-backgroundColor: '#f0f8ff',
-borderWidth: 2,
-borderColor: '#007AFF',
-borderRadius: 12,
-padding: 16,
-flexDirection: 'row',
-justifyContent: 'space-between',
-alignItems: 'center',
-},
-selectedLocationText: {
-flex: 1,
-fontSize: 16,
-color: '#333',
-fontWeight: '500',
-marginRight: 12,
-},
-changeLocationButton: {
-backgroundColor: '#007AFF',
-paddingHorizontal: 16,
-paddingVertical: 8,
-borderRadius: 8,
-},
-changeLocationButtonText: {
-color: '#fff',
-fontSize: 14,
-fontWeight: '600',
-},
-clearLocationButton: {
-marginLeft: 'auto',
-backgroundColor: '#f44336',
-paddingHorizontal: 10,
-paddingVertical: 4,
-borderRadius: 12,
-},
-clearLocationText: {
-color: '#fff',
-fontSize: 12,
-fontWeight: '600',
-},
-searchResults: { marginTop: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, maxHeight: 200, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
-searchScroll: { maxHeight: 200 },
-searchItem: { flexDirection: "row", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
-searchIcon: { fontSize: 18, marginRight: 12 },
-searchItemContent: { flex: 1 },
-searchItemText: { fontSize: 16, color: "#333", fontWeight: "600" },
-searchItemSubtext: { fontSize: 12, color: "#999", marginTop: 2 },
-popularContainer: { marginBottom: 20 },
-popularTitle: { fontSize: 14, fontWeight: "600", color: "#666", marginBottom: 12 },
-chipContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-chip: { backgroundColor: "#e7f3ff", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: "#007AFF" },
-chipText: { color: "#007AFF", fontSize: 13, fontWeight: "500" },
-fareContainer: { backgroundColor: "#f0f8ff", borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: "#007AFF" },
-fareRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-fareLabel: { fontSize: 14, color: "#666" },
-fareValue: { fontSize: 14, fontWeight: "600", color: "#333" },
-divider: { height: 1, backgroundColor: "#007AFF", marginVertical: 8, opacity: 0.3 },
-totalLabel: { fontSize: 16, fontWeight: "bold", color: "#333" },
-totalValue: { fontSize: 20, fontWeight: "bold", color: "#007AFF" },
-discountNotice: { fontSize: 12, color: "#28a745", textAlign: "center", marginTop: 8, fontWeight: "600" },
-companionFareNote: { fontSize: 12, color: "#FF9500", textAlign: "center", marginTop: 4, fontWeight: "600" },
-historyModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 20 },
-modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
-modalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
-closeButton: { fontSize: 28, color: "#999" },
-historyList: { padding: 20 },
-emptyHistoryState: { alignItems: "center", paddingVertical: 60 },
-emptyHistoryEmoji: { fontSize: 64, marginBottom: 16 },
-emptyHistoryText: { fontSize: 18, fontWeight: "600", color: "#666", marginBottom: 8 },
-emptyHistorySubtext: { fontSize: 14, color: "#999" },
-historyDateGroup: { marginBottom: 24 },
-historyDateHeader: { fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 12, paddingLeft: 4 },
-historyItem: { backgroundColor: "#f8f9fa", borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: "#e0e0e0" },
-historyItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-historyTime: { fontSize: 14, color: "#666", fontWeight: "500" },
-historyFareContainer: { alignItems: "flex-end" },
-historyFare: { fontSize: 18, fontWeight: "bold", color: "#28a745" },
-historyPassengerBadge: { fontSize: 10, color: "#007AFF", backgroundColor: "#e7f3ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
-historyCompanionBadge: { fontSize: 10, color: "#FF9500", backgroundColor: "#FFF3E0", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
-historyLocations: { marginBottom: 8 },
-historyLocationRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
-historyLocationIcon: { fontSize: 14, marginRight: 8 },
-historyLocationText: { flex: 1, fontSize: 14, color: "#333" },
-historyDistance: { fontSize: 12, color: "#999", marginTop: 4 },
-modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end", alignItems: "center" },
-modalContent: { backgroundColor: "#fff", borderRadius: 16, padding: 24, width: "80%", alignItems: "center", marginBottom: "50%" },
-modalIconContainer: { width: 60, height: 60, borderRadius: 30, justifyContent: "center", alignItems: "center", marginBottom: 16 },
-successIcon: { backgroundColor: "#4CAF50" },
-errorIcon: { backgroundColor: "#F44336" },
-modalIcon: { fontSize: 32, color: "#fff", fontWeight: "bold" },
-modalMessage: { fontSize: 16, textAlign: "center", color: "#666", marginBottom: 24 },
-modalButton: { width: "100%", height: 50, borderRadius: 8, justifyContent: "center", alignItems: "center" },
-successButton: { backgroundColor: "#4CAF50" },
-errorButton: { backgroundColor: "#F44336" },
-modalButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-bookaride: { width: "100%", height: "100%" },
-bookButton: { height: 56, backgroundColor: "#007AFF", borderRadius: 12, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8, marginTop: 10 },
-bookButtonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  driverActionButtons: { flexDirection: "row", gap: 10, marginLeft: 12 },
+  messageButton: { backgroundColor: "#007AFF", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+  callButton: { backgroundColor: "#28a745", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#28a745", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+  actionIcon: { fontSize: 28 },
+  driverSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
+  waitingSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
+  actionButtonsRow: { flexDirection: "row", gap: 10 },
+  reportButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  reportButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  cancelButton: { flex: 1, backgroundColor: "#F44336", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  cancelButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  cancelButtonDisabled: { flex: 1, backgroundColor: "#e0e0e0", paddingVertical: 14, borderRadius: 12, alignItems: "center", borderWidth: 1, borderColor: "#ccc" },
+  cancelButtonDisabledText: { color: "#999", fontSize: 14, fontWeight: "600" },
+  cancelLockedNote: { fontSize: 11, color: "#999", textAlign: "center", marginTop: 8, fontStyle: "italic" },
+  recommendedSection: { marginBottom: 20, backgroundColor: "#F0F7FF", borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: "#B3D4FF" },
+  recommendedHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  recommendedTitle: { fontSize: 15, fontWeight: "700", color: "#1A1A2E" },
+  liveBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#34C759", gap: 4 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#34C759" },
+  liveBadgeText: { fontSize: 10, fontWeight: "700", color: "#34C759", letterSpacing: 0.5 },
+  recommendedSubtitle: { fontSize: 12, color: "#666", marginBottom: 14 },
+  recommendedChipRow: { gap: 10 },
+  recommendedChip: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 14, borderWidth: 2, paddingVertical: 12, paddingHorizontal: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2, gap: 10 },
+  rankBadge: { width: 34, height: 34, borderRadius: 17, justifyContent: "center", alignItems: "center" },
+  rankEmoji: { fontSize: 16 },
+  recommendedChipBody: { flex: 1 },
+  recommendedChipToda: { fontSize: 14, fontWeight: "700", color: "#1A1A2E", marginBottom: 1 },
+  recommendedChipDesc: { fontSize: 12, color: "#888", marginBottom: 4 },
+  distancePill: { alignSelf: "flex-start", backgroundColor: "#F5F5F5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  distancePillText: { fontSize: 11, fontWeight: "600" },
+  selectedCheck: { width: 24, height: 24, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+  selectedCheckText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  selectedTodaBadge: { marginLeft: 8, backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: "#34C759" },
+  selectedTodaBadgeText: { fontSize: 11, color: "#34C759", fontWeight: "600" },
+  companionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f8f9fa", borderRadius: 16, borderWidth: 1, borderColor: "#e0e0e0", padding: 8, marginBottom: 8 },
+  companionBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 3 },
+  companionBtnDisabled: { backgroundColor: "#c8c8c8", shadowOpacity: 0 },
+  companionBtnText: { fontSize: 26, color: "#fff", fontWeight: "700", lineHeight: 30 },
+  companionCountBox: { alignItems: "center", flex: 1 },
+  companionCountNum: { fontSize: 36, fontWeight: "800", color: "#007AFF", lineHeight: 42 },
+  companionCountLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
+  companionNote: { backgroundColor: "#FFF8EC", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#FFD580", marginBottom: 10 },
+  companionNoteText: { fontSize: 13, color: "#B8720A", fontWeight: "600", textAlign: "center" },
+  seatRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  seatDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
+  seatDotFilled: { backgroundColor: "#007AFF", borderColor: "#007AFF" },
+  seatDotEmpty: { backgroundColor: "#fff", borderColor: "#c0c0c0" },
+  seatLabel: { fontSize: 12, color: "#888", marginLeft: 4 },
+  reportModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", width: "100%" },
+  reportModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
+  reportModalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
+  reportModalBody: { padding: 20, maxHeight: "70%" },
+  reportDriverInfo: { backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: "#e0e0e0" },
+  reportDriverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
+  reportDriverDetails: { fontSize: 14, color: "#666" },
+  reportSectionLabel: { fontSize: 16, fontWeight: "600", color: "#333", marginBottom: 12, marginTop: 8 },
+  reportReasonsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
+  reportReasonChip: { backgroundColor: "#f0f0f0", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 2, borderColor: "#e0e0e0" },
+  reportReasonChipSelected: { backgroundColor: "#FFA500", borderColor: "#FFA500" },
+  reportReasonText: { fontSize: 14, color: "#666", fontWeight: "500" },
+  reportReasonTextSelected: { color: "#fff", fontWeight: "600" },
+  reportCommentInput: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, padding: 16, fontSize: 16, minHeight: 100, backgroundColor: "#fff", marginBottom: 16 },
+  reportDisclaimer: { fontSize: 13, color: "#999", fontStyle: "italic", textAlign: "center", paddingHorizontal: 10 },
+  reportModalFooter: { flexDirection: "row", gap: 10, padding: 20, borderTopWidth: 1, borderTopColor: "#e0e0e0" },
+  reportCancelButton: { flex: 1, backgroundColor: "#f0f0f0", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
+  reportCancelButtonText: { fontSize: 16, fontWeight: "600", color: "#666" },
+  reportSubmitButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
+  reportSubmitButtonDisabled: { backgroundColor: "#ccc" },
+  reportSubmitButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
+  overlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 1000 },
+  backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)" },
+  keyboardAvoid: { width: "100%" },
+  formContainer: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 30, paddingTop: 10, maxHeight: "90%", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
+  scrollContent: { flexGrow: 1 },
+  handleBar: { width: 40, height: 5, backgroundColor: "#ddd", borderRadius: 3, alignSelf: "center", marginTop: 12, marginBottom: 20 },
+  title: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 12 },
+  instructionText: { fontSize: 14, color: "#007AFF", backgroundColor: "#e7f3ff", padding: 12, borderRadius: 8, marginBottom: 20, textAlign: "center" },
+  inputContainer: { marginBottom: 20 },
+  iconRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  icon: { fontSize: 16, marginRight: 8 },
+  label: { fontSize: 14, fontWeight: "600", color: "#666" },
+  passengerTypeContainer: { flexDirection: "row", gap: 10 },
+  passengerTypeButton: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, borderWidth: 2, borderColor: "#e0e0e0", backgroundColor: "#fff", alignItems: "center" },
+  passengerTypeButtonActive: { borderColor: "#007AFF", backgroundColor: "#e7f3ff" },
+  passengerTypeText: { fontSize: 14, fontWeight: "600", color: "#666", textAlign: "center" },
+  passengerTypeTextActive: { color: "#007AFF" },
+  pickerContainer: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, backgroundColor: "#fff", overflow: "hidden" },
+  picker: { height: 50 },
+  // ── search input ──────────────────────────────────────────────
+  searchInputWrapper: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, backgroundColor: "#fff", paddingRight: 12 },
+  searchInput: { flex: 1, height: 50, paddingHorizontal: 16, fontSize: 16 },
+  searchingIndicator: { fontSize: 18 },
+  searchHint: { fontSize: 12, color: "#999", marginTop: 6, marginLeft: 4 },
+  // ── no results ────────────────────────────────────────────────
+  noResultsBox: { marginTop: 8, backgroundColor: "#fff8f0", borderRadius: 10, padding: 14, borderWidth: 1, borderColor: "#ffe0b2" },
+  noResultsText: { fontSize: 13, color: "#e65100", textAlign: "center" },
+  // ── legacy input kept for pickup read-only ────────────────────
+  input: { height: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: "#fff" },
+  readOnlyInput: { minHeight: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#f9f9f9", justifyContent: "center" },
+  readOnlyText: { fontSize: 16, color: "#333" },
+  selectedLocationBox: { backgroundColor: "#f0f8ff", borderWidth: 2, borderColor: "#007AFF", borderRadius: 12, padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  selectedLocationText: { flex: 1, fontSize: 15, color: "#333", fontWeight: "500", marginRight: 12 },
+  changeLocationButton: { backgroundColor: "#007AFF", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
+  changeLocationButtonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  clearLocationButton: { marginLeft: "auto", backgroundColor: "#f44336", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  clearLocationText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  searchResults: { marginTop: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, maxHeight: 220, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
+  searchScroll: { maxHeight: 220 },
+  searchItem: { flexDirection: "row", alignItems: "flex-start", padding: 14, borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
+  searchIcon: { fontSize: 18, marginRight: 12, marginTop: 2 },
+  searchItemContent: { flex: 1 },
+  searchItemText: { fontSize: 15, color: "#333", fontWeight: "600" },
+  searchItemSubtext: { fontSize: 12, color: "#999", marginTop: 2, lineHeight: 16 },
+  fareContainer: { backgroundColor: "#f0f8ff", borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: "#007AFF" },
+  fareRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+  fareLabel: { fontSize: 14, color: "#666" },
+  fareValue: { fontSize: 14, fontWeight: "600", color: "#333" },
+  divider: { height: 1, backgroundColor: "#007AFF", marginVertical: 8, opacity: 0.3 },
+  totalLabel: { fontSize: 16, fontWeight: "bold", color: "#333" },
+  totalValue: { fontSize: 20, fontWeight: "bold", color: "#007AFF" },
+  discountNotice: { fontSize: 12, color: "#28a745", textAlign: "center", marginTop: 8, fontWeight: "600" },
+  companionFareNote: { fontSize: 12, color: "#FF9500", textAlign: "center", marginTop: 4, fontWeight: "600" },
+  historyModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 20 },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
+  modalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
+  closeButton: { fontSize: 28, color: "#999" },
+  historyList: { padding: 20 },
+  emptyHistoryState: { alignItems: "center", paddingVertical: 60 },
+  emptyHistoryEmoji: { fontSize: 64, marginBottom: 16 },
+  emptyHistoryText: { fontSize: 18, fontWeight: "600", color: "#666", marginBottom: 8 },
+  emptyHistorySubtext: { fontSize: 14, color: "#999" },
+  historyDateGroup: { marginBottom: 24 },
+  historyDateHeader: { fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 12, paddingLeft: 4 },
+  historyItem: { backgroundColor: "#f8f9fa", borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: "#e0e0e0" },
+  historyItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  historyTime: { fontSize: 14, color: "#666", fontWeight: "500" },
+  historyFareContainer: { alignItems: "flex-end" },
+  historyFare: { fontSize: 18, fontWeight: "bold", color: "#28a745" },
+  historyPassengerBadge: { fontSize: 10, color: "#007AFF", backgroundColor: "#e7f3ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
+  historyCompanionBadge: { fontSize: 10, color: "#FF9500", backgroundColor: "#FFF3E0", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
+  historyLocations: { marginBottom: 8 },
+  historyLocationRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  historyLocationIcon: { fontSize: 14, marginRight: 8 },
+  historyLocationText: { flex: 1, fontSize: 14, color: "#333" },
+  historyDistance: { fontSize: 12, color: "#999", marginTop: 4 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end", alignItems: "center" },
+  modalContent: { backgroundColor: "#fff", borderRadius: 16, padding: 24, width: "80%", alignItems: "center", marginBottom: "50%" },
+  modalIconContainer: { width: 60, height: 60, borderRadius: 30, justifyContent: "center", alignItems: "center", marginBottom: 16 },
+  successIcon: { backgroundColor: "#4CAF50" },
+  errorIcon: { backgroundColor: "#F44336" },
+  modalIcon: { fontSize: 32, color: "#fff", fontWeight: "bold" },
+  modalMessage: { fontSize: 16, textAlign: "center", color: "#666", marginBottom: 24 },
+  modalButton: { width: "100%", height: 50, borderRadius: 8, justifyContent: "center", alignItems: "center" },
+  successButton: { backgroundColor: "#4CAF50" },
+  errorButton: { backgroundColor: "#F44336" },
+  modalButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  bookaride: { width: "100%", height: "100%" },
+  bookButton: { height: 56, backgroundColor: "#007AFF", borderRadius: 12, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8, marginTop: 10 },
+  bookButtonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
 });

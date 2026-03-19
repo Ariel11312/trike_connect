@@ -637,3 +637,92 @@ export const changePassword = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error while changing password.' });
   }
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD these two functions to your existing authController.js
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── GET /api/auth/users?role=dispatcher  (or any role) ───────────────────────
+export const getUsersByRole = async (req, res) => {
+  try {
+    const { role, status } = req.query;
+
+    // Build filter — role is required for this endpoint
+    const filter = {};
+    if (role) filter.role = role;
+    if (status) filter.RegistrationStatus = status;
+
+    const users = await User.find(filter)
+      .select('-password')           // never expose hashed passwords
+      .sort({ createdAt: -1 });      // newest first
+
+    return res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error('[getUsersByRole] Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while fetching users',
+    });
+  }
+};
+
+
+// ── PATCH /api/auth/users/:id/registration-status ────────────────────────────
+export const updateRegistrationStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { RegistrationStatus, rejectionReason } = req.body;
+
+    const VALID_STATUSES = ['pending', 'approved', 'rejected'];
+    if (!VALID_STATUSES.includes(RegistrationStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
+      });
+    }
+
+    // Require a reason when rejecting
+    if (RegistrationStatus === 'rejected' && !rejectionReason?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'A rejection reason is required when rejecting a registration.',
+      });
+    }
+
+    const updateData = { RegistrationStatus };
+    if (RegistrationStatus === 'rejected') {
+      updateData.rejectionReason = rejectionReason.trim();
+    } else {
+      // Clear rejection reason if re-approving
+      updateData.rejectionReason = '';
+    }
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Registration ${RegistrationStatus} successfully.`,
+      data: user,
+    });
+  } catch (error) {
+    console.error('[updateRegistrationStatus] Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while updating registration status',
+    });
+  }
+};

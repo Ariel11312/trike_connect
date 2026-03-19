@@ -38,11 +38,14 @@ export interface Report {
   reporterProfilePic?: string | null;
 }
 
+type ActiveTab = 'reports' | 'driverRegistration' | 'dispatchers';
+
 const ReportListScreen: React.FC = () => {
   const router = useRouter();
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('reports');
 
   const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -100,6 +103,15 @@ const ReportListScreen: React.FC = () => {
         },
       },
     ]);
+  };
+
+  const handleTabPress = (tab: ActiveTab): void => {
+    setActiveTab(tab);
+    if (tab === 'driverRegistration') {
+      router.push('/DriverRegistration');
+    } else if (tab === 'dispatchers') {
+      router.push('/dispatcherRegistration');
+    }
   };
 
   const getSeverityColor = (severity: SeverityLevel): string => {
@@ -203,30 +215,60 @@ const ReportListScreen: React.FC = () => {
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Reports Dashboard</Text>
-        <View style={styles.headerActions}>
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>Reports Dashboard</Text>
+          <View style={styles.headerIcons}>
+            <TouchableOpacity
+              style={styles.profileButton}
+              onPress={() => router.push('/profile')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.profileIcon}>👤</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.logoutButton}
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.logoutIcon}>🚪</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Tab Bar */}
+        <View style={styles.tabBar}>
           <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push('/DriverRegistration')}
+            style={[styles.tab, activeTab === 'reports' && styles.tabActive]}
+            onPress={() => setActiveTab('reports')}
+            activeOpacity={0.8}
           >
-            <Text style={styles.navButtonIcon}>👤</Text>
-            <Text style={styles.navButtonText}>Driver Registration</Text>
+            <Text style={styles.tabIcon}>📋</Text>
+            <Text style={[styles.tabText, activeTab === 'reports' && styles.tabTextActive]}>
+              Reports
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.profileButton}
-            onPress={() => router.push('/profile')}
+            style={[styles.tab, activeTab === 'driverRegistration' && styles.tabActive]}
+            onPress={() => handleTabPress('driverRegistration')}
             activeOpacity={0.8}
           >
-            <Text style={styles.profileIcon}>👤</Text>
+            <Text style={styles.tabIcon}>🚗</Text>
+            <Text style={[styles.tabText, activeTab === 'driverRegistration' && styles.tabTextActive]}>
+              Drivers
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.logoutButton}
-            onPress={handleLogout}
+            style={[styles.tab, activeTab === 'dispatchers' && styles.tabActive]}
+            onPress={() => handleTabPress('dispatchers')}
             activeOpacity={0.8}
           >
-            <Text style={styles.logoutIcon}>🚪</Text>
+            <Text style={styles.tabIcon}>📡</Text>
+            <Text style={[styles.tabText, activeTab === 'dispatchers' && styles.tabTextActive]}>
+              Dispatchers
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -258,35 +300,31 @@ const styles = StyleSheet.create({
   centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     backgroundColor: '#fff',
-    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#111827',
-    marginBottom: 12,
   },
-  headerActions: {
+  headerIcons: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
-  navButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#eff6ff',
-    padding: 12,
-    borderRadius: 8,
-  },
-  navButtonIcon: { fontSize: 20, marginRight: 8 },
-  navButtonText: { color: '#2563eb', fontWeight: '600' },
   profileButton: {
     backgroundColor: '#fff',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 2,
     borderColor: '#2563eb',
@@ -297,7 +335,7 @@ const styles = StyleSheet.create({
   logoutButton: {
     backgroundColor: '#fff',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 2,
     borderColor: '#ef4444',
@@ -305,6 +343,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoutIcon: { fontSize: 18 },
+
+  // Tab Bar
+  tabBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 0,
+    gap: 4,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    gap: 6,
+  },
+  tabActive: {
+    borderBottomColor: '#2563eb',
+  },
+  tabIcon: {
+    fontSize: 16,
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9ca3af',
+  },
+  tabTextActive: {
+    color: '#2563eb',
+  },
+
   listContainer: { padding: 16 },
   reportCard: {
     backgroundColor: '#fff',

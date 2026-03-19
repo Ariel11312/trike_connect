@@ -10,8 +10,10 @@ import {
   verifyID,
   getUserById,
   getAllUsers,
-  updateProfile,   // ← new
-  changePassword,  // ← new
+  updateProfile,
+  changePassword,
+  getUsersByRole,           // ← new
+  updateRegistrationStatus, // ← new
 } from '../Controllers/authController.js';
 import { protect } from '../auth/auth.js';
 
@@ -27,7 +29,16 @@ router.get('/me',           protect, getMe);
 router.get('/user/:id',     protect, getUserById);
 router.get('/get-all-user', protect, getAllUsers);
 
-router.patch('/update-profile', protect, updateProfile);   // ← new
-router.patch('/change-password',protect, changePassword);  // ← new
+router.patch('/update-profile',  protect, updateProfile);
+router.patch('/change-password', protect, changePassword);
+
+// ── User Management (dispatcher / driver registration approval) ──────────────
+// GET  /api/auth/users?role=dispatcher
+// GET  /api/auth/users?role=driver&status=pending
+router.get('/users',                          protect, getUsersByRole);
+
+// PATCH /api/auth/users/:id/registration-status
+// body: { RegistrationStatus: 'approved' | 'rejected', rejectionReason?: string }
+router.patch('/users/:id/registration-status', protect, updateRegistrationStatus);
 
 export default router;

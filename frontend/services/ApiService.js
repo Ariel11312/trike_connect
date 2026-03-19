@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://192.168.100.37:5000/api';
+const API_BASE_URL = 'https://trike-connect.onrender.com/api';
 
 export const apiService = {
   async getMessages(limit = 50) {

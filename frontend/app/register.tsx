@@ -47,7 +47,7 @@ const TODA_NAMES = [
 ];
 
 export default function Register() {
-  const [role, setRole] = useState<"commuter" | "driver">("commuter");
+  const [role, setRole] = useState<"commuter" | "driver" | "dispatcher">("commuter");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -60,16 +60,18 @@ export default function Register() {
   const [isVerified, setIsVerified] = useState(false);
   const [isSendingCode, setIsSendingCode] = useState(false);
 
-  // Driver-specific
+  // Driver / Dispatcher shared
   const [todaName, setTodaName] = useState("");
-  const [licensePlate, setLicensePlate] = useState("");
-  const [driversLicense, setDriversLicense] = useState("");
-  const [sapiId, setSapiId] = useState("");
   const [idCardUri, setIdCardUri] = useState<string | null>(null);
   const [idCardBase64, setIdCardBase64] = useState<string | null>(null);
   const [isValidResident, setIsValidResident] = useState(false);
   const [detectedAddress, setDetectedAddress] = useState("");
   const [isVerifyingID, setIsVerifyingID] = useState(false);
+
+  // Driver-only
+  const [licensePlate, setLicensePlate] = useState("");
+  const [driversLicense, setDriversLicense] = useState("");
+  const [sapiId, setSapiId] = useState("");
 
   // Modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -87,6 +89,19 @@ export default function Register() {
     if (modalType === "success" && modalMessage.includes("Account created")) {
       router.push("/");
     }
+  };
+
+  // Reset driver/dispatcher fields when switching roles
+  const handleRoleChange = (newRole: "commuter" | "driver" | "dispatcher") => {
+    setRole(newRole);
+    setTodaName("");
+    setLicensePlate("");
+    setDriversLicense("");
+    setSapiId("");
+    setIdCardUri(null);
+    setIdCardBase64(null);
+    setIsValidResident(false);
+    setDetectedAddress("");
   };
 
   // === Email verification functions ===
@@ -142,14 +157,12 @@ export default function Register() {
   // === ID upload function ===
   const handlePickImage = async () => {
     try {
-      // Request permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
         showModal("error", "Media library permission denied");
         return;
       }
 
-      // Launch image picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -161,7 +174,6 @@ export default function Register() {
 
       setIsVerifyingID(true);
 
-      // Resize and compress
       const resized = await ImageManipulator.manipulateAsync(
         result.assets[0].uri,
         [{ resize: { width: 800 } }],
@@ -185,7 +197,6 @@ export default function Register() {
     }
   };
 
-  // Verify ID with backend
   const verifyIDCard = async (base64Image: string) => {
     setIsVerifyingID(true);
     try {
@@ -231,6 +242,9 @@ export default function Register() {
     if (role === "driver" && (!todaName || !licensePlate || !idCardUri || !isValidResident || !driversLicense || !sapiId)) {
       return showModal("error", "Complete driver info and ID");
     }
+    if (role === "dispatcher" && (!todaName || !idCardUri || !isValidResident)) {
+      return showModal("error", "Complete dispatcher info and ID");
+    }
     if (password !== confirmPassword) {
       return showModal("error", "Passwords do not match");
     }
@@ -256,6 +270,12 @@ export default function Register() {
         body.address = detectedAddress;
       }
 
+      if (role === "dispatcher") {
+        body.todaName = todaName;
+        body.idCardImage = idCardBase64;
+        body.address = detectedAddress;
+      }
+
       const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -274,6 +294,8 @@ export default function Register() {
     }
   };
 
+  const isDriverOrDispatcher = role === "driver" || role === "dispatcher";
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -283,7 +305,7 @@ export default function Register() {
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={{ flex: 1 }}>
           <Stack.Screen options={{ headerShown: false }} />
-          <ScrollView 
+          <ScrollView
             style={styles.container}
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
@@ -293,14 +315,14 @@ export default function Register() {
 
             {/* Role selection */}
             <View style={styles.roleContainer}>
-              {(["commuter", "driver"] as const).map((r) => (
+              {(["commuter", "driver", "dispatcher"] as const).map((r) => (
                 <TouchableOpacity
                   key={r}
                   style={[styles.roleButton, role === r && styles.roleActive]}
-                  onPress={() => setRole(r)}
+                  onPress={() => handleRoleChange(r)}
                 >
                   <Text style={[styles.roleText, role === r && styles.roleTextActive]}>
-                    {r === "commuter" ? "🚶 Commuter" : "🏍️ Driver"}
+                    {r === "commuter" ? "🚶 Commuter" : r === "driver" ? "🏍️ Driver" : "📋 Dispatcher"}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -395,8 +417,8 @@ export default function Register() {
               </View>
             )}
 
-            {/* Driver fields */}
-            {role === "driver" && (
+            {/* Driver & Dispatcher shared fields */}
+            {isDriverOrDispatcher && (
               <>
                 {/* TODA Name Picker */}
                 <View style={styles.inputContainer}>
@@ -415,35 +437,43 @@ export default function Register() {
                   </View>
                 </View>
 
-                <TextInput
-                  style={styles.input}
-                  placeholder="License Plate (e.g., ABC-1234)"
-                  value={licensePlate}
-                  onChangeText={setLicensePlate}
-                  autoCapitalize="characters"
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Driver's License Number"
-                  value={driversLicense}
-                  onChangeText={setDriversLicense}
-                  autoCapitalize="characters"
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="SAPI ID Number"
-                  value={sapiId}
-                  onChangeText={setSapiId}
-                  autoCapitalize="characters"
-                />
-                
-                <Text style={styles.uploadLabel}>📷 Upload Driver's License</Text>
+                {/* Driver-only fields */}
+                {role === "driver" && (
+                  <>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="License Plate (e.g., ABC-1234)"
+                      value={licensePlate}
+                      onChangeText={setLicensePlate}
+                      autoCapitalize="characters"
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Driver's License Number"
+                      value={driversLicense}
+                      onChangeText={setDriversLicense}
+                      autoCapitalize="characters"
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="SAPI ID Number"
+                      value={sapiId}
+                      onChangeText={setSapiId}
+                      autoCapitalize="characters"
+                    />
+                  </>
+                )}
+
+                {/* ID upload — shared */}
+                <Text style={styles.uploadLabel}>
+                  📷 Upload {role === "driver" ? "Driver's License" : "Valid ID"}
+                </Text>
                 <TouchableOpacity style={styles.scanIDButton} onPress={handlePickImage}>
                   <Text style={styles.scanIDText}>
                     {idCardUri ? "✓ Change ID Photo" : "📸 Upload ID Photo"}
                   </Text>
                 </TouchableOpacity>
-                
+
                 {idCardUri && (
                   <View style={styles.idPreviewContainer}>
                     <Image
@@ -457,7 +487,7 @@ export default function Register() {
                     )}
                   </View>
                 )}
-                
+
                 {isVerifyingID && (
                   <View style={styles.verifyingContainer}>
                     <ActivityIndicator size="large" color="#007AFF" />
@@ -478,8 +508,7 @@ export default function Register() {
                 <Text style={styles.buttonText}>Register</Text>
               )}
             </TouchableOpacity>
-            
-            {/* Extra bottom padding for keyboard and ID preview */}
+
             <View style={{ height: 200 }} />
           </ScrollView>
 
@@ -512,55 +541,56 @@ export default function Register() {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#f5f5f5" 
+  container: {
+    flex: 1,
+    backgroundColor: "#f5f5f5"
   },
   scrollContent: {
     flexGrow: 1,
     padding: 24,
     paddingBottom: 40,
   },
-  title: { 
-    fontSize: 28, 
-    fontWeight: "bold", 
-    marginBottom: 24, 
+  title: {
+    fontSize: 28,
+    fontWeight: "bold",
+    marginBottom: 24,
     textAlign: "center",
     marginTop: 20,
     color: "#333",
   },
-  roleContainer: { 
-    flexDirection: "row", 
-    marginBottom: 20, 
-    gap: 12 
+  roleContainer: {
+    flexDirection: "row",
+    marginBottom: 20,
+    gap: 8
   },
-  roleButton: { 
-    flex: 1, 
-    padding: 16, 
-    borderWidth: 2, 
-    borderColor: "#ddd", 
-    borderRadius: 12, 
+  roleButton: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 2,
+    borderColor: "#ddd",
+    borderRadius: 12,
     alignItems: "center",
     backgroundColor: "#fff",
   },
-  roleActive: { 
-    backgroundColor: "#007AFF", 
-    borderColor: "#007AFF" 
+  roleActive: {
+    backgroundColor: "#007AFF",
+    borderColor: "#007AFF"
   },
-  roleText: { 
-    color: "#333", 
+  roleText: {
+    color: "#333",
     fontWeight: "600",
-    fontSize: 16,
+    fontSize: 13,
+    textAlign: "center",
   },
-  roleTextActive: { 
-    color: "#fff" 
+  roleTextActive: {
+    color: "#fff"
   },
-  input: { 
-    height: 50, 
-    borderWidth: 1, 
-    borderColor: "#ddd", 
-    borderRadius: 12, 
-    paddingHorizontal: 16, 
+  input: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    paddingHorizontal: 16,
     marginBottom: 16,
     backgroundColor: "#fff",
     fontSize: 16,
@@ -591,12 +621,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 8,
   },
-  verifyButton: { 
-    height: 50, 
-    backgroundColor: "#FF9500", 
-    borderRadius: 12, 
-    justifyContent: "center", 
-    alignItems: "center", 
+  verifyButton: {
+    height: 50,
+    backgroundColor: "#FF9500",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 16,
     shadowColor: "#FF9500",
     shadowOffset: { width: 0, height: 2 },
@@ -604,16 +634,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  verifyButtonText: { 
-    color: "#fff", 
-    fontSize: 16, 
-    fontWeight: "600" 
+  verifyButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600"
   },
-  verifyCodeButton: { 
-    height: 50, 
-    backgroundColor: "#4CAF50", 
-    borderRadius: 12, 
-    justifyContent: "center", 
+  verifyCodeButton: {
+    height: 50,
+    backgroundColor: "#4CAF50",
+    borderRadius: 12,
+    justifyContent: "center",
     alignItems: "center",
     shadowColor: "#4CAF50",
     shadowOffset: { width: 0, height: 2 },
@@ -621,19 +651,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  verifiedBadge: { 
-    backgroundColor: "#E8F5E9", 
-    padding: 16, 
-    borderRadius: 12, 
-    marginBottom: 16, 
+  verifiedBadge: {
+    backgroundColor: "#E8F5E9",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#4CAF50",
   },
-  verifiedText: { 
-    color: "#4CAF50", 
-    fontSize: 16, 
-    fontWeight: "600" 
+  verifiedText: {
+    color: "#4CAF50",
+    fontSize: 16,
+    fontWeight: "600"
   },
   verifiedBadgeSmall: {
     backgroundColor: "#E8F5E9",
@@ -649,12 +679,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  scanIDButton: { 
-    height: 56, 
-    borderRadius: 12, 
-    backgroundColor: "#007AFF", 
-    justifyContent: "center", 
-    alignItems: "center", 
+  scanIDButton: {
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: "#007AFF",
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 16,
     shadowColor: "#007AFF",
     shadowOffset: { width: 0, height: 2 },
@@ -662,17 +692,17 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  scanIDText: { 
-    color: "#fff", 
+  scanIDText: {
+    color: "#fff",
     fontWeight: "600",
     fontSize: 16,
   },
   idPreviewContainer: {
     marginBottom: 16,
   },
-  idPreview: { 
-    width: "100%", 
-    height: 220, 
+  idPreview: {
+    width: "100%",
+    height: 220,
     borderRadius: 12,
     resizeMode: "contain",
     backgroundColor: "#f0f0f0",
@@ -688,12 +718,12 @@ const styles = StyleSheet.create({
     color: "#666",
     fontWeight: "500",
   },
-  button: { 
-    height: 56, 
-    backgroundColor: "#007AFF", 
-    borderRadius: 12, 
-    justifyContent: "center", 
-    alignItems: "center", 
+  button: {
+    height: 56,
+    backgroundColor: "#007AFF",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
     marginTop: 8,
     marginBottom: 20,
     shadowColor: "#007AFF",
@@ -702,22 +732,22 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  buttonText: { 
-    color: "#fff", 
-    fontSize: 18, 
-    fontWeight: "700" 
+  buttonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700"
   },
-  modalOverlay: { 
-    flex: 1, 
-    backgroundColor: "rgba(0,0,0,0.5)", 
-    justifyContent: "center", 
-    alignItems: "center" 
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center"
   },
-  modalContent: { 
-    backgroundColor: "#fff", 
-    borderRadius: 20, 
-    padding: 28, 
-    width: "85%", 
+  modalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 28,
+    width: "85%",
     maxWidth: 400,
     alignItems: "center",
     shadowColor: "#000",
@@ -745,25 +775,25 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
   },
-  modalTitle: { 
-    fontSize: 24, 
-    fontWeight: "bold", 
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
     marginBottom: 12,
     color: "#333",
   },
-  modalMessage: { 
-    fontSize: 16, 
-    textAlign: "center", 
-    color: "#666", 
+  modalMessage: {
+    fontSize: 16,
+    textAlign: "center",
+    color: "#666",
     marginBottom: 24,
     lineHeight: 24,
   },
-  modalButton: { 
-    width: "100%", 
-    height: 50, 
-    borderRadius: 12, 
-    justifyContent: "center", 
-    alignItems: "center", 
+  modalButton: {
+    width: "100%",
+    height: 50,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#007AFF",
     shadowColor: "#007AFF",
     shadowOffset: { width: 0, height: 2 },
@@ -771,12 +801,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  modalButtonText: { 
-    color: "#fff", 
-    fontSize: 16, 
-    fontWeight: "600" 
+  modalButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600"
   },
-  verificationContainer: { 
-    marginBottom: 16 
+  verificationContainer: {
+    marginBottom: 16
   },
-});
+}); 

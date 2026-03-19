@@ -3,7 +3,7 @@
  * Handles all ban-related API calls for React Native app
  */
 
-const API_BASE_URL = 'YOUR_API_BASE_URL'; // Replace with your actual API URL
+const API_BASE_URL = 'https://trike-connect.onrender.com/api'; // Replace with your actual API URL
 
 /**
  * Ban a user

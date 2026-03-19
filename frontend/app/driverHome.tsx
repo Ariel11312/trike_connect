@@ -1,21 +1,20 @@
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Modal,
-  ScrollView,
-  Alert,
-  RefreshControl,
-  Linking,
-  ActivityIndicator,
-} from "react-native";
-import { useState, useEffect, useRef, useCallback } from "react";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { Stack, useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { io, Socket } from "socket.io-client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps"; // ✅ PROVIDER_GOOGLE restored
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,8 +92,8 @@ const STORAGE_KEYS = {
   QUEUE_ENTRY: "@driver_queue_entry",
 };
 
-const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL!;
-const API_URL = process.env.EXPO_PUBLIC_API_URL!;
+const SOCKET_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:5000";
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:5000";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,6 +146,9 @@ const getCodingInfo = () => {
 export default function DriverHome() {
   const router = useRouter();
 
+  // Dynamically import socket.io-client to avoid issues during SSR/init
+  const { io, Socket } = require("socket.io-client");
+
   const [driver, setDriver] = useState<Driver | null>(null);
   const [pendingRides, setPendingRides] = useState<Ride[]>([]);
   const [completedRides, setCompletedRides] = useState<Ride[]>([]);
@@ -187,10 +189,9 @@ export default function DriverHome() {
   const headingSubscription = useRef<Location.LocationSubscription | null>(null);
   const lastHeading = useRef<number>(0);
   const isNavigating = useRef<boolean>(false);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<any>(null);
   const activeRideRef = useRef<Ride | null>(null);
   const driverRef = useRef<Driver | null>(null);
-  // ─── KEY: always-fresh location — no stale closure captures ───────────────
   const currentLocationRef = useRef<LocationWithHeading | null>(null);
   const handleAcceptRideRef = useRef<((ride: Ride) => Promise<void>) | null>(null);
 
@@ -212,10 +213,6 @@ export default function DriverHome() {
     );
   }, []);
 
-  /**
-   * Fits the visible map region to show the entire route with padding
-   * so driver + destination marker are both visible.
-   */
   const fitMapToRoute = useCallback(
     (coords: { latitude: number; longitude: number }[]) => {
       if (!mapRef.current || coords.length < 2) return;
@@ -236,10 +233,6 @@ export default function DriverHome() {
     });
   }, []);
 
-  /**
-   * Fetches a driving route, sets routeCoordinates, optionally fits the map.
-   * Returns the coords so callers can act on them immediately.
-   */
   const getDirections = useCallback(
     async (
       origin: LocationData,
@@ -270,7 +263,6 @@ export default function DriverHome() {
 
         setRouteCoordinates(coords);
         if (fitAfter) {
-          // Let React flush before fitToCoordinates
           setTimeout(() => fitMapToRoute(coords), 300);
         }
         return coords;
@@ -287,10 +279,6 @@ export default function DriverHome() {
     [fitMapToRoute]
   );
 
-  /**
-   * Central "start navigating" helper:
-   * reads fresh location from ref, fetches route, fits map to show full route.
-   */
   const navigateTo = useCallback(
     async (destination: LocationData) => {
       const loc = currentLocationRef.current;
@@ -298,7 +286,7 @@ export default function DriverHome() {
       await getDirections(
         { name: "Current", latitude: loc.latitude, longitude: loc.longitude },
         destination,
-        true   // fitAfter — shows the full route
+        true
       );
     },
     [getDirections]
@@ -339,10 +327,7 @@ export default function DriverHome() {
           setRidePhase("to-pickup");
           setShowRidesList(false);
           setIsRideCardMinimized(false);
-
-          // ── Fetch route and fit map so the polyline is immediately visible ──
           await navigateTo(ride.pickupLocation);
-
           Alert.alert("Ride Accepted", "Navigate to pickup location");
         } else {
           Alert.alert("Error", "Failed to accept ride");
@@ -358,17 +343,15 @@ export default function DriverHome() {
     handleAcceptRideRef.current = handleAcceptRide;
   }, [handleAcceptRide]);
 
-  // ─── activateDispatcherRide (already-accepted rides from poller) ──────────
+  // ─── activateDispatcherRide ───────────────────────────────────────────────
 
   const activateDispatcherRide = useCallback(
     async (ride: Ride) => {
       if (activeRideRef.current) return;
-
       setActiveRide(ride);
       setRidePhase("to-pickup");
       setShowRidesList(false);
       setIsRideCardMinimized(false);
-
       await navigateTo(ride.pickupLocation);
     },
     [navigateTo]
@@ -378,7 +361,6 @@ export default function DriverHome() {
 
   useEffect(() => {
     if (activeRide || !driver?.id) return;
-
     const poll = async () => {
       try {
         const res = await fetch(`${API_URL}/api/rides`, {
@@ -388,23 +370,14 @@ export default function DriverHome() {
         });
         const data = await res.json();
         if (!data.success) return;
-
         const rides: Ride[] = data.rides ?? [];
-
-        // Case 1: already accepted + driver assigned
         const acceptedRide = rides.find(
           (r) => r.status === "accepted" && matchesDriver(r.driver, driver.id)
         );
-        // Case 2: pending but dispatcher pre-set driver field
         const pendingAssigned = rides.find(
-          (r) =>
-            r.status === "pending" &&
-            r.driver &&
-            matchesDriver(r.driver, driver.id)
+          (r) => r.status === "pending" && r.driver && matchesDriver(r.driver, driver.id)
         );
-
         const target = acceptedRide ?? pendingAssigned;
-
         if (target && !activeRideRef.current) {
           if (target.status === "pending") {
             await handleAcceptRideRef.current?.(target);
@@ -412,11 +385,8 @@ export default function DriverHome() {
             await activateDispatcherRide(target);
           }
         }
-      } catch {
-        // silent — network blip
-      }
+      } catch {}
     };
-
     const interval = setInterval(poll, 4000);
     poll();
     return () => clearInterval(interval);
@@ -605,34 +575,23 @@ export default function DriverHome() {
     socket.on("connect", () => {
       setSocketConnected(true);
       socket.emit("user-online", driver.id);
-      console.log("✅ Socket connected, registered as:", driver.id);
+      console.log("✅ Socket connected:", driver.id);
     });
     socket.on("disconnect", () => setSocketConnected(false));
-    socket.on("connect_error", (err) => {
+    socket.on("connect_error", (err: any) => {
       setSocketConnected(false);
-      console.log("❌ Socket connect_error:", err.message);
+      console.log("❌ Socket error:", err.message);
     });
     socket.on("reconnect", () => {
-      console.log("🔄 Socket reconnected, re-registering:", driver.id);
       socket.emit("user-online", driver.id);
     });
 
-    socket.onAny((eventName, ...args) => {
-      console.log(`📨 Socket event: "${eventName}"`, JSON.stringify(args).slice(0, 200));
-    });
-
     socket.on("ride-assigned-by-dispatcher", (data: { rideId: string; ride: Ride }) => {
-      console.log("🚦 ride-assigned-by-dispatcher received");
       const ride = data.ride;
       Alert.alert(
         "🚦 Ride Assigned by Dispatcher",
         `You have been assigned a new ride!\n\nPassenger: ${ride.firstname} ${ride.lastname}\nPickup: ${ride.pickupLocation.name}\nFare: ₱${ride.fare}`,
-        [
-          {
-            text: "Accept & Navigate",
-            onPress: () => handleAcceptRideRef.current?.(ride),
-          },
-        ]
+        [{ text: "Accept & Navigate", onPress: () => handleAcceptRideRef.current?.(ride) }]
       );
     });
 
@@ -663,7 +622,6 @@ export default function DriverHome() {
       socket.connect();
     } else {
       socket.emit("user-online", driver.id);
-      console.log("✅ Already connected, registered as:", driver.id);
     }
 
     return () => { socket.removeAllListeners(); };
@@ -787,17 +745,17 @@ export default function DriverHome() {
 
   const handleReset = async () => {
     try {
-      console.log('reset')
-              const res = await fetch(`${API_URL}/queue/driver/${driver?.id}/available}`, {
-          method: "GET",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-        });
-        const data = await res.json();
+      console.log("reset");
+      const res = await fetch(`${API_URL}/api/dispatcher/queue/driver/${driver?.id}/available`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
     } catch (error) {
-      
+      console.error("handleReset error:", error);
     }
-  }
+  };
 
   // ─── Ride status poller ───────────────────────────────────────────────────
 
@@ -862,7 +820,6 @@ export default function DriverHome() {
 
   // ─── Location ─────────────────────────────────────────────────────────────
 
-  // Re-draw route when app comes back from background with an active ride
   useEffect(() => {
     if (!isRestoringState && activeRide && ridePhase) {
       const dest =
@@ -871,7 +828,7 @@ export default function DriverHome() {
           : activeRide.dropoffLocation;
       navigateTo(dest);
     }
-  }, [isRestoringState]); // intentionally only on restore-complete
+  }, [isRestoringState]);
 
   useEffect(() => { startLocationTracking(); return () => stopLocationTracking(); }, []);
   useEffect(() => { isNavigating.current = !!(activeRide && ridePhase); }, [activeRide, ridePhase]);
@@ -894,9 +851,12 @@ export default function DriverHome() {
           };
           driverRef.current = d;
           setDriver(d);
+          console.log("✅ Driver loaded:", d.firstname, d.lastname);
+        } else {
+          console.warn("⚠️ /api/auth/me returned no user:", data);
         }
       })
-      .catch(console.error);
+      .catch((e) => console.error("❌ Failed to load driver:", e));
   }, []);
 
   useEffect(() => { restorePersistedState(); }, []);
@@ -1001,7 +961,6 @@ export default function DriverHome() {
         text: "Yes, Start Trip",
         onPress: async () => {
           setRidePhase("to-dropoff");
-
           if (driver?.id) {
             fetch(`${API_URL}/api/dispatcher/queue/driver/${driver.id}/on-trip`, {
               method: "PUT",
@@ -1009,11 +968,7 @@ export default function DriverHome() {
               headers: { "Content-Type": "application/json" },
             }).catch(() => {});
           }
-
-          if (activeRide) {
-            // Fit map to full route to dropoff
-            await navigateTo(activeRide.dropoffLocation);
-          }
+          if (activeRide) await navigateTo(activeRide.dropoffLocation);
           Alert.alert("Trip Started", "Navigate to dropoff location");
         },
       },
@@ -1106,7 +1061,11 @@ export default function DriverHome() {
         Alert.alert("Permission Denied", "Location permission is required");
         return;
       }
-      await Location.requestBackgroundPermissionsAsync();
+      try {
+        await Location.requestBackgroundPermissionsAsync();
+      } catch {
+        console.log("Background location not available");
+      }
       const initial = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.BestForNavigation,
       });
@@ -1127,13 +1086,13 @@ export default function DriverHome() {
           longitudeDelta: 0.01,
         });
       }
-
       locationSubscription.current = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 5 },
         handleLocationUpdate
       );
       headingSubscription.current = await Location.watchHeadingAsync(handleHeadingUpdate);
-    } catch {
+    } catch (e) {
+      console.error("Location tracking error:", e);
       Alert.alert("Error", "Unable to start location tracking");
     }
   };
@@ -1153,7 +1112,6 @@ export default function DriverHome() {
     setCurrentLocation(loc);
     currentLocationRef.current = loc;
     if (location.coords.heading != null) lastHeading.current = location.coords.heading;
-    // Only animate camera in nav mode — don't fight fitToCoordinates on accept
     if (isNavigating.current && mapRef.current) updateMapCamera(loc);
   };
 
@@ -1223,16 +1181,8 @@ export default function DriverHome() {
     const ci = getCodingInfo();
     if (ci.isWeekend) return { text: `${ci.dayName} - No Coding`, color: "#28a745", icon: "✅" };
     if (isCoded)
-      return {
-        text: `${ci.dayName} - CODED (Digits: ${ci.codingDigits.join(", ")})`,
-        color: "#dc3545",
-        icon: "🚫",
-      };
-    return {
-      text: `${ci.dayName} - Not Coded (Digits: ${ci.codingDigits.join(", ")})`,
-      color: "#28a745",
-      icon: "✅",
-    };
+      return { text: `${ci.dayName} - CODED (Digits: ${ci.codingDigits.join(", ")})`, color: "#dc3545", icon: "🚫" };
+    return { text: `${ci.dayName} - Not Coded (Digits: ${ci.codingDigits.join(", ")})`, color: "#28a745", icon: "✅" };
   };
 
   const groupRidesByDate = (rides: Ride[]) => {
@@ -1268,11 +1218,11 @@ export default function DriverHome() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
-        {/* Map */}
+        {/* ✅ Google Maps via PROVIDER_GOOGLE */}
         <MapView
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
           style={styles.map}
+          provider={PROVIDER_GOOGLE}
           region={mapRegion}
           showsUserLocation={false}
           showsMyLocationButton={false}
@@ -1570,49 +1520,32 @@ export default function DriverHome() {
                   </View>
                 ) : (
                   pendingRides.map((ride) => (
-                    <View
-                      key={ride._id}
-                      style={[styles.rideCard, isCoded && styles.rideCardDisabled]}
-                    >
+                    <View key={ride._id} style={[styles.rideCard, isCoded && styles.rideCardDisabled]}>
                       <View style={styles.rideHeader}>
-                        <Text style={styles.passengerNameCard}>
-                          👤 {ride.firstname} {ride.lastname}
-                        </Text>
+                        <Text style={styles.passengerNameCard}>👤 {ride.firstname} {ride.lastname}</Text>
                         <Text style={styles.fareCard}>₱{ride.fare}</Text>
                       </View>
                       <View style={styles.locationInfo}>
                         <View style={styles.locationRow}>
                           <Text style={styles.locationIcon}>🟢</Text>
-                          <Text style={styles.locationText} numberOfLines={2}>
-                            {ride.pickupLocation.name}
-                          </Text>
+                          <Text style={styles.locationText} numberOfLines={2}>{ride.pickupLocation.name}</Text>
                         </View>
                         <View style={styles.locationRow}>
                           <Text style={styles.locationIcon}>🔴</Text>
-                          <Text style={styles.locationText} numberOfLines={2}>
-                            {ride.dropoffLocation.name}
-                          </Text>
+                          <Text style={styles.locationText} numberOfLines={2}>{ride.dropoffLocation.name}</Text>
                         </View>
                       </View>
                       <View style={styles.rideDetails}>
                         <Text style={styles.detailText}>📏 {ride.distance} km</Text>
-                        <Text style={styles.detailText}>
-                          🕐 {new Date(ride.createdAt).toLocaleTimeString()}
-                        </Text>
+                        <Text style={styles.detailText}>🕐 {new Date(ride.createdAt).toLocaleTimeString()}</Text>
                       </View>
                       <View style={styles.rideActions}>
                         <TouchableOpacity
-                          style={[
-                            styles.actionBtn,
-                            styles.acceptBtn,
-                            isCoded && styles.actionBtnDisabled,
-                          ]}
+                          style={[styles.actionBtn, styles.acceptBtn, isCoded && styles.actionBtnDisabled]}
                           onPress={() => handleAcceptRide(ride)}
                           disabled={isCoded}
                         >
-                          <Text style={styles.actionBtnText}>
-                            {isCoded ? "🚫 Coded" : "✓ Accept"}
-                          </Text>
+                          <Text style={styles.actionBtnText}>{isCoded ? "🚫 Coded" : "✓ Accept"}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[styles.actionBtn, styles.rejectBtn]}
@@ -1651,12 +1584,7 @@ export default function DriverHome() {
                     style={[styles.groupingBtn, historyGrouping === g && styles.groupingBtnActive]}
                     onPress={() => setHistoryGrouping(g)}
                   >
-                    <Text
-                      style={[
-                        styles.groupingBtnText,
-                        historyGrouping === g && styles.groupingBtnTextActive,
-                      ]}
-                    >
+                    <Text style={[styles.groupingBtnText, historyGrouping === g && styles.groupingBtnTextActive]}>
                       {g.charAt(0).toUpperCase() + g.slice(1)}
                     </Text>
                   </TouchableOpacity>
@@ -1680,44 +1608,29 @@ export default function DriverHome() {
                         <View style={styles.historySectionHeader}>
                           <Text style={styles.historySectionDate}>{date}</Text>
                           <View style={styles.historySectionStats}>
-                            <Text style={styles.historySectionCount}>
-                              {ridesForDate.length} rides
-                            </Text>
-                            <Text style={styles.historySectionEarnings}>
-                              ₱{calculateTotalEarnings(ridesForDate).toFixed(2)}
-                            </Text>
+                            <Text style={styles.historySectionCount}>{ridesForDate.length} rides</Text>
+                            <Text style={styles.historySectionEarnings}>₱{calculateTotalEarnings(ridesForDate).toFixed(2)}</Text>
                           </View>
                         </View>
                         {ridesForDate.map((ride) => (
                           <View key={ride._id} style={styles.historyRideCard}>
                             <View style={styles.historyRideHeader}>
-                              <Text style={styles.historyPassengerName}>
-                                👤 {ride.firstname} {ride.lastname}
-                              </Text>
+                              <Text style={styles.historyPassengerName}>👤 {ride.firstname} {ride.lastname}</Text>
                               <Text style={styles.historyFare}>₱{ride.fare}</Text>
                             </View>
                             <View style={styles.historyLocationInfo}>
                               <View style={styles.locationRow}>
                                 <Text style={styles.locationIcon}>🟢</Text>
-                                <Text style={styles.historyLocationText} numberOfLines={1}>
-                                  {ride.pickupLocation.name}
-                                </Text>
+                                <Text style={styles.historyLocationText} numberOfLines={1}>{ride.pickupLocation.name}</Text>
                               </View>
                               <View style={styles.locationRow}>
                                 <Text style={styles.locationIcon}>🔴</Text>
-                                <Text style={styles.historyLocationText} numberOfLines={1}>
-                                  {ride.dropoffLocation.name}
-                                </Text>
+                                <Text style={styles.historyLocationText} numberOfLines={1}>{ride.dropoffLocation.name}</Text>
                               </View>
                             </View>
                             <View style={styles.historyRideFooter}>
                               <Text style={styles.historyDetailText}>📏 {ride.distance} km</Text>
-                              <Text style={styles.historyDetailText}>
-                                🕐{" "}
-                                {new Date(
-                                  ride.completedAt || ride.createdAt
-                                ).toLocaleTimeString()}
-                              </Text>
+                              <Text style={styles.historyDetailText}>🕐 {new Date(ride.completedAt || ride.createdAt).toLocaleTimeString()}</Text>
                             </View>
                           </View>
                         ))}

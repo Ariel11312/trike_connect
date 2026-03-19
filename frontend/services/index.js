@@ -1,11 +1,11 @@
-import axios from "axios";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from "axios";
 
 // Replace this with your actual server IP address
 // For Android emulator: use 10.0.2.2
 // For iOS simulator: use localhost or 127.0.0.1
 // For physical device: use your computer's IP address (e.g., 192.168.1.100)
-const API_BASE_URL = "http://192.168.100.37:5000/api"; // Change this to your server IP
+const API_BASE_URL = "https://trike-connect.onrender.com/api"; // Change this to your server IP
 
 export const axiosInstanceWithCookies = axios.create({
   baseURL: API_BASE_URL,

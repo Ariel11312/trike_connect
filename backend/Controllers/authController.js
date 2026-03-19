@@ -10,84 +10,82 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 // Configure nodemailer transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT || 587,
-  secure: process.env.EMAIL_PORT == 465,
+  service: 'gmail', // let nodemailer handle host/port automatically
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    pass: process.env.EMAIL_PASS, // must be an App Password, not your Gmail password
   },
 });
 
-// Store verification codes temporarily (use Redis in production)
-const verificationCodes = new Map();
+  // Store verification codes temporarily (use Redis in production)
+  const verificationCodes = new Map();
 
-export const sendVerification = async (req, res) => {
-  try {
-    const { email } = req.body;
+  export const sendVerification = async (req, res) => {
+    try {
+      const { email } = req.body;
 
-    // Generate 6-digit code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    // Store code with 10 minute expiration
-    verificationCodes.set(email, {
-      code,
-      expiresAt: Date.now() + 10 * 60 * 1000
-    });
+      // Generate 6-digit code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      
+      // Store code with 10 minute expiration
+      verificationCodes.set(email, {
+        code,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
 
-    // Send email using Nodemailer
-    await transporter.sendMail({
-      from: `"Trike Connect" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: 'Verify Your Email',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Email Verification</h2>
-          <p>Your Trike Connect verification code is:</p>
-          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px;">
-            ${code}
+      // Send email using Nodemailer
+      await transporter.sendMail({
+        from: `"Trike Connect" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: 'Verify Your Email',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2>Email Verification</h2>
+            <p>Your Trike Connect verification code is:</p>
+            <div style="background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px;">
+              ${code}
+            </div>
+            <p>This code will expire in 10 minutes.</p>
           </div>
-          <p>This code will expire in 10 minutes.</p>
-        </div>
-      `
-    });
+        `
+      });
 
-    res.json({ success: true, message: 'Verification code sent' });
-  } catch (error) {
-    console.error('Send verification error:', error);
-    res.status(500).json({ message: 'Failed to send verification code' });
-  }
-};
-
-// Verify code
-export const verificationCode = async (req, res) => {
-  try {
-    const { email, code } = req.body;
-
-    const stored = verificationCodes.get(email);
-
-    if (!stored) {
-      return res.status(400).json({ message: 'No verification code found' });
+      res.json({ success: true, message: 'Verification code sent' });
+    } catch (error) {
+      console.error('Send verification error:', error);
+      res.status(500).json({ message: 'Failed to send verification code' });
     }
+  };
 
-    if (Date.now() > stored.expiresAt) {
+  // Verify code
+  export const verificationCode = async (req, res) => {
+    try {
+      const { email, code } = req.body;
+
+      const stored = verificationCodes.get(email);
+
+      if (!stored) {
+        return res.status(400).json({ message: 'No verification code found' });
+      }
+
+      if (Date.now() > stored.expiresAt) {
+        verificationCodes.delete(email);
+        return res.status(400).json({ message: 'Verification code expired' });
+      }
+
+      if (stored.code !== code) {
+        return res.status(400).json({ message: 'Invalid verification code' });
+      }
+
+      // Code is valid, remove it
       verificationCodes.delete(email);
-      return res.status(400).json({ message: 'Verification code expired' });
+
+      res.json({ success: true, message: 'Email verified' });
+    } catch (error) {
+      console.error('Verify code error:', error);
+      res.status(500).json({ message: 'Verification failed' });
     }
-
-    if (stored.code !== code) {
-      return res.status(400).json({ message: 'Invalid verification code' });
-    }
-
-    // Code is valid, remove it
-    verificationCodes.delete(email);
-
-    res.json({ success: true, message: 'Email verified' });
-  } catch (error) {
-    console.error('Verify code error:', error);
-    res.status(500).json({ message: 'Verification failed' });
-  }
-};
+  };
 
 // Generate JWT Token
 const generateToken = (id) => 

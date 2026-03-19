@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.100.37:5000';
+const API_BASE_URL = 'https://trike-connect.onrender.com';
 
 export const getAllChats = async () => {
   try {

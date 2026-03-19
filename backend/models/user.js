@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: [true, 'Please provide email'], unique: true, lowercase: true, trim: true },
   phoneNumber: { type: String, required: [true, 'Please provide phone number'], trim: true },
   password: { type: String, required: [true, 'Please provide password'], minlength: 6, select: false },
-  role: { type: String, enum: ['commuter', 'admin', 'driver'], default: 'commuter' },
+  role: { type: String, enum: ['commuter', 'admin', 'driver', 'dispatcher'], default: 'commuter' },
 
   // Email verification
   isEmailVerified: { type: Boolean, default: false },
@@ -18,18 +18,21 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken: { type: String, select: false },
   resetPasswordExpires: { type: Date, select: false },
 
-  // Driver-specific
+  // Driver & Dispatcher shared fields
   todaName: { type: String, trim: true },
+  idCardImage: { type: String, trim: true }, // Stores the filename of the ID image
+  address: { type: String, trim: true }, // Extracted from OCR
+
+  // Driver-only fields
   licensePlate: { type: String, trim: true },
   driversLicense: { type: String, trim: true },
   sapiId: { type: String, trim: true },
-  idCardImage: { type: String, trim: true }, // Stores the filename of the ID image (e.g., "id_1234567890_user_email_com.jpg")
-  address: { type: String, trim: true }, // Extracted from OCR
- RegistrationStatus: { 
-  type: String, 
-  enum: ['pending', 'approved', 'rejected'], 
-  default: 'pending' 
-},
+
+  RegistrationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
 
   // Ban/Suspension fields
   isBanned: { type: Boolean, default: false },
@@ -83,10 +86,10 @@ userSchema.methods.generatePasswordResetToken = function() {
 // Check if user is currently banned
 userSchema.methods.isCurrentlyBanned = function() {
   if (!this.isBanned) return false;
-  
+
   // If banUntil is null, it's a permanent ban
   if (!this.banUntil) return true;
-  
+
   // Check if temporary ban has expired
   if (new Date() > this.banUntil) {
     // Auto-unban if temporary ban expired
@@ -98,7 +101,7 @@ userSchema.methods.isCurrentlyBanned = function() {
     this.save();
     return false;
   }
-  
+
   return true;
 };
 

@@ -1,21 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { router, Stack } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  StatusBar,
-  RefreshControl,
-  Modal,
-  TextInput,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -436,6 +436,7 @@ function ChangePasswordModal({ visible, onClose }: ChangePasswordModalProps) {
   };
 
   return (
+
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={cp.safe}>
         <StatusBar barStyle="light-content" backgroundColor={C.navy} />
@@ -833,6 +834,8 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={main.safe}>
+          <Stack.Screen options={{ headerShown: false }} />
+
       <StatusBar barStyle="light-content" backgroundColor={C.navy} />
 
       <ScrollView

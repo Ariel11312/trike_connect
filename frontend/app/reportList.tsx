@@ -1,17 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import { Stack, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
-  RefreshControl,
   Alert,
+  FlatList,
   Image,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
 
 // Type definitions
 export type SeverityLevel = 'high' | 'medium' | 'low';
@@ -44,8 +44,7 @@ const ReportListScreen: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  // API Base URL - Update with your actual backend URL
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
+  const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
   useEffect(() => {
     fetchReports();
@@ -56,19 +55,12 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
       setLoading(true);
       const response = await fetch(`${API_BASE_URL}/api/reports/`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          // Add authorization header if needed
-          // 'Authorization': `Bearer ${yourAuthToken}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch reports');
-      }
+      if (!response.ok) throw new Error('Failed to fetch reports');
 
       const result = await response.json();
-      
       if (result.success) {
         setReports(result.data);
       } else {
@@ -90,53 +82,49 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
     fetchReports();
   };
 
+  const handleLogout = (): void => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await fetch(`${API_BASE_URL}/api/auth/logout`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } catch {}
+          router.replace('/');
+        },
+      },
+    ]);
+  };
+
   const getSeverityColor = (severity: SeverityLevel): string => {
     switch (severity) {
-      case 'high':
-        return '#ef4444';
-      case 'medium':
-        return '#f59e0b';
-      case 'low':
-        return '#10b981';
-      default:
-        return '#6b7280';
+      case 'high':   return '#ef4444';
+      case 'medium': return '#f59e0b';
+      case 'low':    return '#10b981';
+      default:       return '#6b7280';
     }
   };
 
   const getStatusColor = (status: ReportStatus): string => {
     switch (status) {
-      case 'pending':
-        return '#f59e0b';
-      case 'resolved':
-        return '#10b981';
-      case 'rejected':
-        return '#ef4444';
-      default:
-        return '#6b7280';
-    }
-  };
-
-  const getSeverityIcon = (severity: SeverityLevel): string => {
-    switch (severity) {
-      case 'high':
-        return '❗';
-      case 'medium':
-        return '⚠️';
-      case 'low':
-        return 'ℹ️';
-      default:
-        return '📄';
+      case 'pending':  return '#f59e0b';
+      case 'resolved': return '#10b981';
+      case 'rejected': return '#ef4444';
+      default:         return '#6b7280';
     }
   };
 
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     });
   };
 
@@ -147,11 +135,6 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
     });
   };
 
-  const handleDriverRegistration = (): void => {
-    router.push('/DriverRegistration');
-  };
-
-  // Avatar component to show profile pic or initials
   const Avatar: React.FC<{
     profilePic?: string | null;
     initials: string;
@@ -165,7 +148,6 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
         />
       );
     }
-
     return (
       <View style={[styles.initialsContainer, { width: size, height: size, borderRadius: size / 2 }]}>
         <Text style={[styles.initialsText, { fontSize: size * 0.4 }]}>{initials}</Text>
@@ -177,14 +159,10 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
     <TouchableOpacity style={styles.reportCard} onPress={() => handleReportPress(item)}>
       <View style={styles.reportHeader}>
         <View style={styles.headerLeft}>
-          <Avatar
-            profilePic={item.driverProfilePic}
-            initials={item.driverInitials}
-            size={40}
-          />
+          <Avatar profilePic={item.driverProfilePic} initials={item.driverInitials} size={40} />
           <View style={styles.headerText}>
             <Text style={styles.driverName}>{item.driverName}</Text>
-            <View style={styles.reporterRow}>   
+            <View style={styles.reporterRow}>
               <Text style={styles.reportedBy}>Reported by {item.reporterName}</Text>
             </View>
           </View>
@@ -197,9 +175,7 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
       <View style={styles.reportBody}>
         <Text style={styles.reason}>{item.reason}</Text>
         {item.comment ? (
-          <Text style={styles.comment} numberOfLines={2}>
-            {item.comment}
-          </Text>
+          <Text style={styles.comment} numberOfLines={2}>{item.comment}</Text>
         ) : null}
       </View>
 
@@ -223,13 +199,36 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
 
   return (
     <SafeAreaView style={styles.container}>
-                <Stack.Screen options={{ headerShown: false }} />
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Reports Dashboard</Text>
-        <TouchableOpacity style={styles.navButton} onPress={handleDriverRegistration}>
-          <Text style={styles.navButtonIcon}>👤</Text>
-          <Text style={styles.navButtonText}>Driver Registration</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => router.push('/DriverRegistration')}
+          >
+            <Text style={styles.navButtonIcon}>👤</Text>
+            <Text style={styles.navButtonText}>Driver Registration</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={() => router.push('/profile')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.profileIcon}>👤</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.logoutIcon}>🚪</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <FlatList
@@ -255,15 +254,8 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ;
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f3f4f6',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     backgroundColor: '#fff',
     padding: 16,
@@ -276,24 +268,44 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 12,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   navButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#eff6ff',
     padding: 12,
     borderRadius: 8,
   },
-  navButtonIcon: {
-    fontSize: 20,
-    marginRight: 8,
+  navButtonIcon: { fontSize: 20, marginRight: 8 },
+  navButtonText: { color: '#2563eb', fontWeight: '600' },
+  profileButton: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  navButtonText: {
-    color: '#2563eb',
-    fontWeight: '600',
+  profileIcon: { fontSize: 18 },
+  logoutButton: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  listContainer: {
-    padding: 16,
-  },
+  logoutIcon: { fontSize: 18 },
+  listContainer: { padding: 16 },
   reportCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -311,64 +323,23 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 12,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    flex: 1,
-  },
-  avatar: {
-    backgroundColor: '#e5e7eb',
-  },
+  headerLeft: { flexDirection: 'row', flex: 1 },
+  avatar: { backgroundColor: '#e5e7eb' },
   initialsContainer: {
     backgroundColor: '#3b82f6',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  initialsText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  headerText: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  driverName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#111827',
-  },
-  reporterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  reportedBy: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  reportBody: {
-    marginBottom: 12,
-  },
-  reason: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  comment: {
-    fontSize: 13,
-    color: '#6b7280',
-    lineHeight: 18,
-  },
+  initialsText: { color: '#fff', fontWeight: 'bold' },
+  headerText: { marginLeft: 12, flex: 1 },
+  driverName: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
+  reporterRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  reportedBy: { fontSize: 12, color: '#6b7280' },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  statusText: { fontSize: 10, fontWeight: 'bold', color: '#fff' },
+  reportBody: { marginBottom: 12 },
+  reason: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
+  comment: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
   reportFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -377,49 +348,15 @@ const styles = StyleSheet.create({
     borderTopColor: '#f3f4f6',
     paddingTop: 12,
   },
-  severityContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  severityDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  severityText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6b7280',
-  },
-  dateText: {
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 64,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#9ca3af',
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
+  severityContainer: { flexDirection: 'row', alignItems: 'center' },
+  severityDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  severityText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
+  dateText: { fontSize: 12, color: '#9ca3af' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 64 },
+  emptyIcon: { fontSize: 64, marginBottom: 16 },
+  emptyText: { fontSize: 16, color: '#9ca3af', marginBottom: 16 },
+  retryButton: { backgroundColor: '#2563eb', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  retryButtonText: { color: '#fff', fontWeight: '600' },
 });
 
 export default ReportListScreen;

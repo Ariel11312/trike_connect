@@ -1,138 +1,23 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from "@react-native-picker/picker";
+import * as Location from "expo-location";
+import { router, Stack } from "expo-router";
+import { useEffect, useState } from "react";
 import {
-  View,
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  Modal,
-  ScrollView,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
-  Linking,
+  View,
 } from "react-native";
-import { useState, useEffect, useRef } from "react";
-import MapView, { Marker, Polyline } from "react-native-maps";
-import * as Location from "expo-location";
-import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
-import Constants from "expo-constants";
-import { Stack, router } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Picker } from "@react-native-picker/picker";
-
-// ─────────────────────────────────────────────────────────────────
-// NOTIFICATION HANDLER — controls foreground banner behaviour
-// Must be called at module level (outside the component)
-// ─────────────────────────────────────────────────────────────────
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
-// ─── Detect if running inside Expo Go (SDK 53+ dropped remote push support) ───
-const isExpoGo = Constants?.appOwnership === "expo";
-
-// ─── Android notification channels ───────────────────────────────
-async function setupAndroidChannels() {
-  if (Platform.OS !== "android") return;
-
-  await Notifications.setNotificationChannelAsync("ride-updates", {
-    name: "Ride Updates",
-    importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: "#007AFF",
-    sound: "default",
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-  });
-
-  await Notifications.setNotificationChannelAsync("driver-alerts", {
-    name: "Driver Alerts",
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 500, 200, 500],
-    lightColor: "#28a745",
-    sound: "default",
-  });
-}
-
-// ─── Register device & get Expo push token ───────────────────────
-async function registerForPushNotifications(): Promise<string | null> {
-  if (!Device.isDevice) {
-    console.warn("Push notifications require a physical device");
-    return null;
-  }
-
-  if (isExpoGo) {
-    console.log(
-      "ℹ️ Running in Expo Go — remote push tokens not supported. Local notifications still work."
-    );
-    await setupAndroidChannels();
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    if (existing !== "granted") {
-      await Notifications.requestPermissionsAsync();
-    }
-    return null;
-  }
-
-  await setupAndroidChannels();
-
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let finalStatus = existing;
-  if (existing !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-  if (finalStatus !== "granted") {
-    console.warn("Push notification permission denied");
-    return null;
-  }
-
-  const projectId =
-    Constants?.expoConfig?.extra?.eas?.projectId ??
-    (Constants as any)?.easConfig?.projectId;
-
-  if (!projectId) {
-    console.warn("No EAS projectId found");
-    return null;
-  }
-
-  try {
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    return tokenData.data;
-  } catch (e) {
-    console.warn("Failed to get push token:", e);
-    return null;
-  }
-}
-
-// ─── Helper: fire a local notification immediately ───────────────
-async function fireLocalNotification(
-  title: string,
-  body: string,
-  data: Record<string, unknown> = {},
-  channelId = "ride-updates"
-) {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title,
-        body,
-        data,
-        sound: "default",
-        ...(Platform.OS === "android" ? { channelId } : {}),
-      },
-      trigger: null,
-    });
-  } catch (e) {
-    console.warn("Local notification failed:", e);
-  }
-}
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
 // ─────────────────────────────────────────────────────────────────
 // INTERFACES
@@ -158,6 +43,15 @@ interface Driver {
   licensePlate: string;
 }
 
+interface MarkerDragEvent {
+  nativeEvent: {
+    coordinate: {
+      latitude: number;
+      longitude: number;
+    };
+  };
+}
+
 const STORAGE_KEYS = {
   CURRENT_RIDE: "@user_current_ride",
   IS_WAITING: "@user_is_waiting",
@@ -175,7 +69,6 @@ interface BookingData {
   routeCoordinates: { latitude: number; longitude: number }[];
   selectedTodaName: string;
   passengerType: "regular" | "senior_pwd";
-  // ── NEW ──
   companionCount: number;
 }
 
@@ -188,7 +81,6 @@ interface RideHistory {
   date: string;
   timestamp: number;
   passengerType: "regular" | "senior_pwd";
-  // ── NEW ──
   companionCount: number;
 }
 
@@ -297,12 +189,8 @@ interface RecommendedToda extends TodaTerminal {
 
 // ─────────────────────────────────────────────────────────────────
 // COMPANION SURCHARGE HELPER
-// Rules:
-//   • Solo (0 companions) → no surcharge
-//   • Each companion      → +20% of base fare
-//   • Max total passengers = 5  (i.e. max 4 companions)
 // ─────────────────────────────────────────────────────────────────
-const MAX_TOTAL_PASSENGERS = 5; // 1 main + 4 companions
+const MAX_TOTAL_PASSENGERS = 5;
 
 function applyCompanionSurcharge(baseFare: number, companionCount: number): number {
   const companions = Math.min(Math.max(companionCount, 0), MAX_TOTAL_PASSENGERS - 1);
@@ -333,10 +221,7 @@ export default function UserHome() {
   const [assignedDriver, setAssignedDriver]       = useState<Driver | null>(null);
   const [passengerType, setPassengerType]         = useState<"regular" | "senior_pwd">("regular");
   const [recommendedTodas, setRecommendedTodas]   = useState<RecommendedToda[]>([]);
-
-  // ── NEW: companion count state ──────────────────────────────────
   const [companionCount, setCompanionCount]       = useState(0);
-
   const [isConfirmingComplete, setIsConfirmingComplete] = useState(false);
 
   // Report states
@@ -347,55 +232,16 @@ export default function UserHome() {
 
   // Location / map states
   const [currentLocation, setCurrentLocation]   = useState<LocationData | null>(null);
-  const [dropoffMarker, setDropoffMarker]         = useState<LocationData | null>(null);
-  const [mapRegion, setMapRegion]                 = useState({
+  const [dropoffMarker, setDropoffMarker]       = useState<LocationData | null>(null);
+  const [mapRegion, setMapRegion]               = useState({
     latitude: 14.8847, longitude: 120.8572, latitudeDelta: 0.1, longitudeDelta: 0.1,
   });
-  const [searchQuery, setSearchQuery]             = useState("");
+  const [searchQuery, setSearchQuery]           = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
-  const [searchResults, setSearchResults]         = useState<FareMatrixEntry[]>([]);
-  const [routeCoordinates, setRouteCoordinates]   = useState<{ latitude: number; longitude: number }[]>([]);
-
-  const notificationListener = useRef<Notifications.Subscription | null>(null);
-  const responseListener      = useRef<Notifications.Subscription | null>(null);
+  const [searchResults, setSearchResults]       = useState<FareMatrixEntry[]>([]);
+  const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
 
   const base_url = process.env.EXPO_PUBLIC_API_URL;
-
-  useEffect(() => {
-    registerForPushNotifications().then(async (token) => {
-      if (!token) return;
-      try {
-        await fetch(`${base_url}/api/auth/push-token`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token }),
-        });
-        console.log("✅ Push token registered:", token);
-      } catch (e) {
-        console.error("Failed to save push token:", e);
-      }
-    });
-
-    notificationListener.current =
-      Notifications.addNotificationReceivedListener((notification) => {
-        console.log("📲 Foreground push received:", notification.request.content.title);
-      });
-
-    responseListener.current =
-      Notifications.addNotificationResponseReceivedListener((response) => {
-        const data = response.notification.request.content.data as any;
-        if (data?.rideId) {
-          setIsWaitingForDriver(true);
-          setShowBookingForm(false);
-        }
-      });
-
-    return () => {
-      notificationListener.current?.remove();
-      responseListener.current?.remove();
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const uniqueTodas = Array.from(new Set(FARE_MATRIX.map((e) => e.toda)));
@@ -537,7 +383,7 @@ export default function UserHome() {
           setRouteCoordinates(b.routeCoordinates);
           setSelectedTodaName(b.selectedTodaName || "");
           setPassengerType(b.passengerType || "regular");
-          setCompanionCount(b.companionCount ?? 0); // ── NEW
+          setCompanionCount(b.companionCount ?? 0);
           if (b.currentLocation && b.dropoffMarker)
             fitMapToMarkers(b.currentLocation, b.dropoffMarker);
         }
@@ -603,7 +449,7 @@ export default function UserHome() {
     dist: number,
     cost: number,
     passType: "regular" | "senior_pwd",
-    companions: number  // ── NEW
+    companions: number
   ) => {
     try {
       const entry: RideHistory = {
@@ -615,7 +461,7 @@ export default function UserHome() {
         date: new Date().toISOString(),
         timestamp: Date.now(),
         passengerType: passType,
-        companionCount: companions, // ── NEW
+        companionCount: companions,
       };
       const updated = [entry, ...rideHistory].slice(0, 50);
       await AsyncStorage.setItem(STORAGE_KEYS.RIDE_HISTORY, JSON.stringify(updated));
@@ -652,8 +498,10 @@ export default function UserHome() {
     setDropoffMarker(item.dropoffLocation);
     setDropoffLocation(item.dropoffLocation.name);
     setPassengerType(item.passengerType);
-    setCompanionCount(item.companionCount ?? 0); // ── NEW
+    setCompanionCount(item.companionCount ?? 0);
     setShowHistoryModal(false);
+    setSearchQuery("");
+    setShowSearchResults(false);
     Keyboard.dismiss();
     if (currentLocation) {
       getDirections(currentLocation, item.dropoffLocation);
@@ -670,7 +518,7 @@ export default function UserHome() {
           const b: BookingData = {
             pickupLocation, dropoffLocation, currentLocation, dropoffMarker,
             distance, fare, routeCoordinates, selectedTodaName, passengerType,
-            companionCount, // ── NEW
+            companionCount,
           };
           await Promise.all([
             AsyncStorage.setItem(STORAGE_KEYS.CURRENT_RIDE,  JSON.stringify(currentRide)),
@@ -720,54 +568,28 @@ export default function UserHome() {
         const data = await res.json();
         if (!data.success || !data.ride) return;
 
-        const rideStatus    = data.ride.status as string;
+        const rideStatus     = data.ride.status as string;
         const previousStatus = currentRide.status as string;
-        const driverId      = data.ride.driver || data.ride.driverId || data.ride.acceptedBy;
+        const driverId       = data.ride.driver || data.ride.driverId || data.ride.acceptedBy;
 
         setCurrentRide(data.ride);
 
         if (rideStatus === "accepted") {
           if (previousStatus !== "accepted") {
             if (!assignedDriver && driverId) await fetchDriverInfo(driverId);
-            await fireLocalNotification(
-              "🎉 Driver on the way!",
-              "A driver has accepted your ride and is heading to your pickup location!",
-              { rideId: currentRide._id, status: "accepted" },
-              "driver-alerts"
-            );
             Alert.alert("🎉 Ride Accepted!", "A driver has accepted your ride. They will arrive shortly!", [{ text: "OK" }]);
           } else if (!assignedDriver && driverId) {
             await fetchDriverInfo(driverId);
           }
-        } else if (rideStatus === "in-progress") {
-          if (previousStatus !== "in-progress") {
-            await fireLocalNotification(
-              "🚗 Trip Started!",
-              "Your driver has picked you up. You're on your way to the destination!",
-              { rideId: currentRide._id, status: "in-progress" },
-              "ride-updates"
-            );
-          }
         } else if (rideStatus === "pending_confirmation") {
           if (!isConfirmingComplete) {
             setIsConfirmingComplete(true);
-            await fireLocalNotification(
-              "✋ Confirm Your Arrival",
-              "Your driver says you've arrived. Please open the app to confirm and complete the trip.",
-              { rideId: currentRide._id, status: "pending_confirmation" },
-              "driver-alerts"
-            );
           }
         } else if (rideStatus === "completed") {
           setIsWaitingForDriver(false);
           setCurrentRide(null);
           setAssignedDriver(null);
           setIsConfirmingComplete(false);
-          await fireLocalNotification(
-            "✅ Ride Completed",
-            `Your ride has been completed. Total fare: ₱${data.ride.fare ?? fare}. Thank you!`,
-            { rideId: currentRide._id, status: "completed" }
-          );
           Alert.alert("✅ Ride Completed!", "Your ride has been completed. Thank you for using our service!", [{ text: "OK" }]);
         } else if (rideStatus === "cancelled") {
           setIsWaitingForDriver(false);
@@ -775,13 +597,6 @@ export default function UserHome() {
           setAssignedDriver(null);
           setIsConfirmingComplete(false);
           const reason = data.ride.cancelledReason || "Your ride has been cancelled.";
-          if (data.ride.cancelledBy !== "user") {
-            await fireLocalNotification(
-              "❌ Ride Cancelled",
-              reason,
-              { rideId: currentRide._id, status: "cancelled" }
-            );
-          }
           Alert.alert("❌ Ride Cancelled", reason, [{ text: "OK" }]);
         }
       } catch (e) {
@@ -912,10 +727,9 @@ export default function UserHome() {
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    if (!query.length) {
-      setSearchResults([]); setShowSearchResults(false);
-      setDropoffLocation(""); setDropoffMarker(null);
-      setDistance(0); setFare(0); setRouteCoordinates([]);
+    if (!query.trim()) {
+      setSearchResults([]);
+      setShowSearchResults(false);
       return;
     }
     const filtered = FARE_MATRIX.filter((e) =>
@@ -937,7 +751,8 @@ export default function UserHome() {
     };
     setDropoffMarker(dropoffLoc);
     setDropoffLocation(location.destination);
-    setSearchQuery(""); setShowSearchResults(false);
+    setSearchQuery("");
+    setShowSearchResults(false);
     Keyboard.dismiss();
     if (currentLocation) {
       if (selectedTodaName) {
@@ -946,7 +761,7 @@ export default function UserHome() {
           currentLocation, dropoffLoc,
           selectedTodaName, passengerType
         );
-        if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount)); // ── NEW
+        if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount));
       }
       getDirections(currentLocation, dropoffLoc);
       fitMapToMarkers(currentLocation, dropoffLoc);
@@ -960,22 +775,13 @@ export default function UserHome() {
       return;
     }
     const { latitude, longitude } = event.nativeEvent.coordinate;
-    const tempLoc: LocationData = {
-      name: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-      latitude, longitude,
-    };
-    setDropoffMarker(tempLoc);
-    setDropoffLocation(tempLoc.name);
-    if (!showBookingForm) setShowBookingForm(true);
-    if (currentLocation) {
-      fitMapToMarkers(currentLocation, tempLoc);
-      getDirections(currentLocation, tempLoc);
-    }
+    
     try {
       const address = await Location.reverseGeocodeAsync({ latitude, longitude });
       const text = address[0]
         ? [address[0].street, address[0].city, address[0].region].filter(Boolean).join(", ")
-        : tempLoc.name;
+        : `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      
       if (!isInBaliuag(text)) {
         Alert.alert(
           "⚠️ Outside Coverage Area",
@@ -983,27 +789,75 @@ export default function UserHome() {
           [{ text: "OK" }]
         );
       }
+      
       const dropoffLoc: LocationData = { name: text, latitude, longitude };
       setDropoffMarker(dropoffLoc);
       setDropoffLocation(text);
-      if (currentLocation && selectedTodaName) {
-        const { fare: baseFare } = calculateFareFromMatrix(
-          pickupLocation, text, currentLocation, dropoffLoc, selectedTodaName, passengerType
-        );
-        if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount)); // ── NEW
+      setSearchQuery("");
+      setShowSearchResults(false);
+      
+      if (!showBookingForm) setShowBookingForm(true);
+      
+      if (currentLocation) {
+        fitMapToMarkers(currentLocation, dropoffLoc);
+        getDirections(currentLocation, dropoffLoc);
+        
+        if (selectedTodaName) {
+          const { fare: baseFare } = calculateFareFromMatrix(
+            pickupLocation, text, currentLocation, dropoffLoc, selectedTodaName, passengerType
+          );
+          if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount));
+        }
       }
     } catch (e) {
       console.error("Error reverse geocoding:", e);
+      Alert.alert("Error", "Unable to get location name. Please try again.");
     }
   };
 
-  // ── Recalculate fare whenever TODA, passenger type, dropoff, OR companion count changes ──
+  const handleMarkerDragEnd = async (event: MarkerDragEvent) => {
+    const { latitude, longitude } = event.nativeEvent.coordinate;
+    
+    try {
+      const address = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const text = address[0]
+        ? [address[0].street, address[0].city, address[0].region].filter(Boolean).join(", ")
+        : `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      
+      if (!isInBaliuag(text)) {
+        Alert.alert(
+          "⚠️ Outside Coverage Area",
+          `The selected location (${text}) may be outside Baliuag/Baliwag coverage.`,
+          [{ text: "OK" }]
+        );
+      }
+      
+      const dropoffLoc: LocationData = { name: text, latitude, longitude };
+      setDropoffMarker(dropoffLoc);
+      setDropoffLocation(text);
+      
+      if (currentLocation) {
+        getDirections(currentLocation, dropoffLoc);
+        
+        if (selectedTodaName) {
+          const { fare: baseFare } = calculateFareFromMatrix(
+            pickupLocation, text, currentLocation, dropoffLoc, selectedTodaName, passengerType
+          );
+          if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount));
+        }
+      }
+    } catch (e) {
+      console.error("Error during marker drag:", e);
+      Alert.alert("Error", "Unable to update location. Please try again.");
+    }
+  };
+
   useEffect(() => {
     if (dropoffLocation && selectedTodaName && currentLocation && dropoffMarker) {
       const { fare: baseFare } = calculateFareFromMatrix(
         pickupLocation, dropoffLocation, currentLocation, dropoffMarker, selectedTodaName, passengerType
       );
-      if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount)); // ── NEW
+      if (baseFare > 0) setFare(applyCompanionSurcharge(baseFare, companionCount));
     }
   }, [selectedTodaName, passengerType, dropoffLocation, companionCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1019,7 +873,7 @@ export default function UserHome() {
       setSearchQuery(""); setShowSearchResults(false);
       setRouteCoordinates([]); setShowBookingForm(false);
       setSelectedTodaName(""); setPassengerType("regular");
-      setCompanionCount(0); // ── NEW
+      setCompanionCount(0);
     }
   };
 
@@ -1032,7 +886,7 @@ export default function UserHome() {
     if (fare === 0)                            { showModal("error", "Unable to calculate fare. Please try again."); return; }
     if (!user)                                 { showModal("error", "User data not loaded. Please try again."); return; }
 
-    const totalPassengers = 1 + companionCount; // ── NEW
+    const totalPassengers = 1 + companionCount;
 
     try {
       const res  = await fetch(`${base_url}/api/rides/book`, {
@@ -1045,13 +899,13 @@ export default function UserHome() {
           distance, fare,
           todaName: selectedTodaName,
           passengerType,
-          companionCount,        // ── NEW
-          totalPassengers,       // ── NEW
+          companionCount,
+          totalPassengers,
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        await saveToHistory(currentLocation, dropoffMarker, distance, fare, passengerType, companionCount); // ── NEW
+        await saveToHistory(currentLocation, dropoffMarker, distance, fare, passengerType, companionCount);
         setCurrentRide(data.ride);
         setIsWaitingForDriver(true);
         showModal("success", "Ride booked successfully! Waiting for driver acceptance...");
@@ -1093,7 +947,7 @@ export default function UserHome() {
                 setDistance(0); setFare(0);
                 setSearchQuery(""); setShowSearchResults(false);
                 setRouteCoordinates([]); setSelectedTodaName(""); setPassengerType("regular");
-                setCompanionCount(0); // ── NEW
+                setCompanionCount(0);
                 Alert.alert("Ride Cancelled", "Your ride has been cancelled successfully.");
               }
             } catch (e) {
@@ -1130,7 +984,7 @@ export default function UserHome() {
                 setDistance(0); setFare(0);
                 setSearchQuery(""); setShowSearchResults(false);
                 setRouteCoordinates([]); setSelectedTodaName(""); setPassengerType("regular");
-                setCompanionCount(0); // ── NEW
+                setCompanionCount(0);
                 Alert.alert("✅ Trip Completed", "Thank you for riding with us!");
               } else {
                 Alert.alert("Error", "Failed to confirm trip. Please try again.");
@@ -1212,7 +1066,6 @@ export default function UserHome() {
 
   const canCancelRide = !assignedDriver && currentRide?.status === "pending";
 
-  // ── Derived values for fare display ──────────────────────────────
   const { fare: baseFareForDisplay } = (dropoffLocation && selectedTodaName && currentLocation && dropoffMarker)
     ? calculateFareFromMatrix(pickupLocation, dropoffLocation, currentLocation, dropoffMarker, selectedTodaName, passengerType)
     : { fare: 0 };
@@ -1226,9 +1079,9 @@ export default function UserHome() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
 
-        {/* Map */}
         <MapView
           style={styles.map}
+          provider={PROVIDER_GOOGLE}
           region={mapRegion}
           onPress={handleMapPress}
           showsUserLocation
@@ -1243,7 +1096,11 @@ export default function UserHome() {
           {dropoffMarker && (
             <Marker
               coordinate={{ latitude: dropoffMarker.latitude, longitude: dropoffMarker.longitude }}
-              title="Dropoff Location" description={dropoffMarker.name} pinColor="red"
+              title="Dropoff Location" 
+              description={dropoffMarker.name} 
+              pinColor="red"
+              draggable={!isWaitingForDriver && !currentRide}
+              onDragEnd={handleMarkerDragEnd}
             />
           )}
           {routeCoordinates.length > 0 && (
@@ -1254,23 +1111,15 @@ export default function UserHome() {
           )}
         </MapView>
 
-        {/* ── Top bar: user card + profile + logout ── */}
+        {/* Top bar */}
         <View style={styles.userCardContainer}>
           <View style={styles.userCard}>
             <Text style={styles.emoji}>👋</Text>
             <Text style={styles.userName}>{user ? `${user.firstname} ${user.lastname}` : "Loading..."}</Text>
           </View>
-
-          {/* Profile button */}
-          <TouchableOpacity
-            style={styles.profileButton}
-            onPress={() => router.push("/profile")}
-            activeOpacity={0.8}
-          >
+          <TouchableOpacity style={styles.profileButton} onPress={() => router.push("/profile")} activeOpacity={0.8}>
             <Text style={styles.profileIcon}>👤</Text>
           </TouchableOpacity>
-
-          {/* Logout button */}
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutIcon}>🚪</Text>
           </TouchableOpacity>
@@ -1302,23 +1151,16 @@ export default function UserHome() {
               <Text style={styles.confirmCompleteTitle}>You've Arrived!</Text>
             </View>
             <Text style={styles.confirmCompleteSubtext}>
-              Your driver has indicated you've reached your destination.
-              Please confirm to complete the trip.
+              Your driver has indicated you've reached your destination. Please confirm to complete the trip.
             </Text>
             <View style={styles.confirmFareRow}>
               <Text style={styles.confirmFareLabel}>Trip Fare</Text>
               <Text style={styles.confirmFareValue}>₱{currentRide?.fare ?? fare}</Text>
             </View>
-            <TouchableOpacity
-              style={styles.confirmCompleteButton}
-              onPress={handleConfirmComplete}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={styles.confirmCompleteButton} onPress={handleConfirmComplete} activeOpacity={0.85}>
               <Text style={styles.confirmCompleteButtonText}>✅ Confirm Arrival & Complete Trip</Text>
             </TouchableOpacity>
-            <Text style={styles.confirmCompleteNote}>
-              ⚠️ Only confirm if you have actually reached your destination.
-            </Text>
+            <Text style={styles.confirmCompleteNote}>⚠️ Only confirm if you have actually reached your destination.</Text>
           </View>
 
         ) : currentRide?.status === "accepted" && assignedDriver ? (
@@ -1351,9 +1193,7 @@ export default function UserHome() {
                 <Text style={styles.cancelButtonDisabledText}>🔒 Cannot Cancel</Text>
               </View>
             </View>
-            <Text style={styles.cancelLockedNote}>
-              Cancellation is no longer available once a driver is assigned.
-            </Text>
+            <Text style={styles.cancelLockedNote}>Cancellation is no longer available once a driver is assigned.</Text>
           </View>
 
         ) : (
@@ -1378,28 +1218,13 @@ export default function UserHome() {
         {/* Booking Form Overlay */}
         {showBookingForm && !isWaitingForDriver && (
           <View style={styles.overlay}>
-            <TouchableOpacity
-              style={styles.backdrop}
-              activeOpacity={1}
-              onPress={() => { setShowBookingForm(false); Keyboard.dismiss(); }}
-            />
-            <KeyboardAvoidingView
-              behavior={Platform.OS === "ios" ? "padding" : "height"}
-              style={styles.keyboardAvoid}
-              keyboardVerticalOffset={0}
-            >
+            <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => { setShowBookingForm(false); Keyboard.dismiss(); }} />
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.keyboardAvoid} keyboardVerticalOffset={0}>
               <View style={styles.formContainer}>
                 <View style={styles.handleBar} />
-                <ScrollView
-                  style={styles.bookaride}
-                  showsVerticalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={styles.scrollContent}
-                >
+                <ScrollView style={styles.bookaride} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent}>
                   <Text style={styles.title}>Book a Ride</Text>
-                  <Text style={styles.instructionText}>
-                    📍 Search for a location OR tap anywhere on the map
-                  </Text>
+                  <Text style={styles.instructionText}>📍 Search for a location, tap map, or hold & drag the red pin</Text>
 
                   {/* Recommended TODA */}
                   {recommendedTodas.length > 0 && (
@@ -1421,12 +1246,7 @@ export default function UserHome() {
                           return (
                             <TouchableOpacity
                               key={rec.toda}
-                              style={[
-                                styles.recommendedChip,
-                                isSelected
-                                  ? { borderColor: rankColor, backgroundColor: rankColor + "15" }
-                                  : { borderColor: "#E0E0E0" },
-                              ]}
+                              style={[styles.recommendedChip, isSelected ? { borderColor: rankColor, backgroundColor: rankColor + "15" } : { borderColor: "#E0E0E0" }]}
                               onPress={() => setSelectedTodaName(rec.toda)}
                               activeOpacity={0.75}
                             >
@@ -1434,14 +1254,10 @@ export default function UserHome() {
                                 <Text style={styles.rankEmoji}>{rankEmojis[i]}</Text>
                               </View>
                               <View style={styles.recommendedChipBody}>
-                                <Text style={[styles.recommendedChipToda, isSelected && { color: rankColor }]} numberOfLines={1}>
-                                  {rec.toda}
-                                </Text>
+                                <Text style={[styles.recommendedChipToda, isSelected && { color: rankColor }]} numberOfLines={1}>{rec.toda}</Text>
                                 <Text style={styles.recommendedChipDesc} numberOfLines={1}>{rec.description}</Text>
                                 <View style={styles.distancePill}>
-                                  <Text style={[styles.distancePillText, { color: rankColor }]}>
-                                    📍 {formatDistanceLabel(rec.distanceKm)}
-                                  </Text>
+                                  <Text style={[styles.distancePillText, { color: rankColor }]}>📍 {formatDistanceLabel(rec.distanceKm)}</Text>
                                 </View>
                               </View>
                               {isSelected && (
@@ -1463,89 +1279,45 @@ export default function UserHome() {
                       <Text style={styles.label}>Passenger Type</Text>
                     </View>
                     <View style={styles.passengerTypeContainer}>
-                      <TouchableOpacity
-                        style={[styles.passengerTypeButton, passengerType === "regular" && styles.passengerTypeButtonActive]}
-                        onPress={() => setPassengerType("regular")}
-                      >
+                      <TouchableOpacity style={[styles.passengerTypeButton, passengerType === "regular" && styles.passengerTypeButtonActive]} onPress={() => setPassengerType("regular")}>
                         <Text style={[styles.passengerTypeText, passengerType === "regular" && styles.passengerTypeTextActive]}>Regular</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.passengerTypeButton, passengerType === "senior_pwd" && styles.passengerTypeButtonActive]}
-                        onPress={() => setPassengerType("senior_pwd")}
-                      >
+                      <TouchableOpacity style={[styles.passengerTypeButton, passengerType === "senior_pwd" && styles.passengerTypeButtonActive]} onPress={() => setPassengerType("senior_pwd")}>
                         <Text style={[styles.passengerTypeText, passengerType === "senior_pwd" && styles.passengerTypeTextActive]}>Senior Citizen / PWD</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
 
-                  {/* ── NEW: Companion / Kasama Counter ─────────────────────── */}
+                  {/* Companion Counter */}
                   <View style={styles.inputContainer}>
                     <View style={styles.iconRow}>
                       <Text style={styles.icon}>👥</Text>
                       <Text style={styles.label}>Number of Kasama (Companions)</Text>
                     </View>
                     <View style={styles.companionRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.companionBtn,
-                          companionCount === 0 && styles.companionBtnDisabled,
-                        ]}
-                        onPress={() => setCompanionCount((c) => Math.max(0, c - 1))}
-                        disabled={companionCount === 0}
-                      >
+                      <TouchableOpacity style={[styles.companionBtn, companionCount === 0 && styles.companionBtnDisabled]} onPress={() => setCompanionCount((c) => Math.max(0, c - 1))} disabled={companionCount === 0}>
                         <Text style={styles.companionBtnText}>−</Text>
                       </TouchableOpacity>
-
                       <View style={styles.companionCountBox}>
                         <Text style={styles.companionCountNum}>{companionCount}</Text>
-                        <Text style={styles.companionCountLabel}>
-                          {companionCount === 0
-                            ? "Solo"
-                            : `${1 + companionCount} pax total`}
-                        </Text>
+                        <Text style={styles.companionCountLabel}>{companionCount === 0 ? "Solo" : `${1 + companionCount} pax total`}</Text>
                       </View>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.companionBtn,
-                          companionCount >= MAX_TOTAL_PASSENGERS - 1 && styles.companionBtnDisabled,
-                        ]}
-                        onPress={() =>
-                          setCompanionCount((c) => Math.min(MAX_TOTAL_PASSENGERS - 1, c + 1))
-                        }
-                        disabled={companionCount >= MAX_TOTAL_PASSENGERS - 1}
-                      >
+                      <TouchableOpacity style={[styles.companionBtn, companionCount >= MAX_TOTAL_PASSENGERS - 1 && styles.companionBtnDisabled]} onPress={() => setCompanionCount((c) => Math.min(MAX_TOTAL_PASSENGERS - 1, c + 1))} disabled={companionCount >= MAX_TOTAL_PASSENGERS - 1}>
                         <Text style={styles.companionBtnText}>+</Text>
                       </TouchableOpacity>
                     </View>
-
                     {companionCount > 0 && (
                       <View style={styles.companionNote}>
-                        <Text style={styles.companionNoteText}>
-                          +{companionCount} kasama × 20% surcharge per companion
-                        </Text>
+                        <Text style={styles.companionNoteText}>+{companionCount} kasama × 20% surcharge per companion</Text>
                       </View>
                     )}
-
-                    {/* Seat indicator dots */}
                     <View style={styles.seatRow}>
                       {Array.from({ length: MAX_TOTAL_PASSENGERS }).map((_, i) => (
-                        <View
-                          key={i}
-                          style={[
-                            styles.seatDot,
-                            i < 1 + companionCount
-                              ? styles.seatDotFilled
-                              : styles.seatDotEmpty,
-                          ]}
-                        />
+                        <View key={i} style={[styles.seatDot, i < 1 + companionCount ? styles.seatDotFilled : styles.seatDotEmpty]} />
                       ))}
-                      <Text style={styles.seatLabel}>
-                        {1 + companionCount}/{MAX_TOTAL_PASSENGERS} seats
-                      </Text>
+                      <Text style={styles.seatLabel}>{1 + companionCount}/{MAX_TOTAL_PASSENGERS} seats</Text>
                     </View>
                   </View>
-                  {/* ── END companion counter ─────────────────────────────── */}
 
                   {/* TODA Picker */}
                   <View style={styles.inputContainer}>
@@ -1559,11 +1331,7 @@ export default function UserHome() {
                       )}
                     </View>
                     <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={selectedTodaName}
-                        onValueChange={(v) => setSelectedTodaName(v)}
-                        style={styles.picker}
-                      >
+                      <Picker selectedValue={selectedTodaName} onValueChange={(v) => setSelectedTodaName(v)} style={styles.picker}>
                         <Picker.Item label="Choose a TODA..." value="" />
                         {todaNames.map((t, i) => <Picker.Item key={i} label={t} value={t} />)}
                       </Picker>
@@ -1586,27 +1354,62 @@ export default function UserHome() {
                     <View style={styles.iconRow}>
                       <Text style={styles.icon}>🔴</Text>
                       <Text style={styles.label}>Dropoff Location</Text>
+                      {dropoffLocation && !searchQuery && (
+                        <TouchableOpacity
+                          style={styles.clearLocationButton}
+                          onPress={() => {
+                            setDropoffLocation("");
+                            setDropoffMarker(null);
+                            setDistance(0);
+                            setFare(0);
+                            setRouteCoordinates([]);
+                          }}
+                        >
+                          <Text style={styles.clearLocationText}>✕ Clear</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Search destination..."
-                      value={searchQuery || dropoffLocation}
-                      onChangeText={(text) => {
-                        if (text.length > 0) {
-                          handleSearch(text);
-                        } else {
-                          setSearchQuery(""); setShowSearchResults(false); setSearchResults([]);
-                          setDropoffLocation(""); setDropoffMarker(null);
-                          setDistance(0); setFare(0); setRouteCoordinates([]);
-                        }
-                      }}
-                      onFocus={() => { if (searchQuery.length > 0) setShowSearchResults(true); }}
-                    />
+                    
+                    {/* Show selected location or search input */}
+                    {dropoffLocation && !searchQuery ? (
+                      <View style={styles.selectedLocationBox}>
+                        <Text style={styles.selectedLocationText}>{dropoffLocation}</Text>
+                        <TouchableOpacity
+                          style={styles.changeLocationButton}
+                          onPress={() => {
+                            setSearchQuery("");
+                            setDropoffLocation("");
+                            setDropoffMarker(null);
+                          }}
+                        >
+                          <Text style={styles.changeLocationButtonText}>Change</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Search destination or tap map..."
+                        value={searchQuery}
+                        onChangeText={handleSearch}
+                        onFocus={() => {
+                          if (searchQuery.length > 0) setShowSearchResults(true);
+                        }}
+                      />
+                    )}
+                    
                     {showSearchResults && searchResults.length > 0 && (
                       <View style={styles.searchResults}>
-                        <ScrollView nestedScrollEnabled style={styles.searchScroll} keyboardShouldPersistTaps="handled">
+                        <ScrollView 
+                          nestedScrollEnabled 
+                          style={styles.searchScroll} 
+                          keyboardShouldPersistTaps="handled"
+                        >
                           {searchResults.map((loc, i) => (
-                            <TouchableOpacity key={i} style={styles.searchItem} onPress={() => handleSelectSearchResult(loc)}>
+                            <TouchableOpacity 
+                              key={i} 
+                              style={styles.searchItem} 
+                              onPress={() => handleSelectSearchResult(loc)}
+                            >
                               <Text style={styles.searchIcon}>📍</Text>
                               <View style={styles.searchItemContent}>
                                 <Text style={styles.searchItemText}>{loc.destination}</Text>
@@ -1619,13 +1422,17 @@ export default function UserHome() {
                     )}
                   </View>
 
-                  {/* Popular Destinations */}
+                  {/* Only show Popular Destinations when there's no search query AND no location selected */}
                   {!dropoffLocation && !searchQuery && (
                     <View style={styles.popularContainer}>
                       <Text style={styles.popularTitle}>Popular Destinations:</Text>
                       <View style={styles.chipContainer}>
                         {FARE_MATRIX.slice(0, 12).map((loc, i) => (
-                          <TouchableOpacity key={i} style={styles.chip} onPress={() => handleSelectSearchResult(loc)}>
+                          <TouchableOpacity 
+                            key={i} 
+                            style={styles.chip} 
+                            onPress={() => handleSelectSearchResult(loc)}
+                          >
                             <Text style={styles.chipText}>{loc.destination}</Text>
                           </TouchableOpacity>
                         ))}
@@ -1633,7 +1440,7 @@ export default function UserHome() {
                     </View>
                   )}
 
-                  {/* ── Fare summary (updated with companion breakdown) ── */}
+                  {/* Fare Summary */}
                   {distance > 0 && fare > 0 && (
                     <View style={styles.fareContainer}>
                       <View style={styles.fareRow}>
@@ -1646,9 +1453,7 @@ export default function UserHome() {
                       </View>
                       <View style={styles.fareRow}>
                         <Text style={styles.fareLabel}>Passengers</Text>
-                        <Text style={styles.fareValue}>
-                          {1 + companionCount} pax {companionCount > 0 ? `(you + ${companionCount} kasama)` : "(solo)"}
-                        </Text>
+                        <Text style={styles.fareValue}>{1 + companionCount} pax {companionCount > 0 ? `(you + ${companionCount} kasama)` : "(solo)"}</Text>
                       </View>
                       {companionCount > 0 && (
                         <>
@@ -1657,12 +1462,8 @@ export default function UserHome() {
                             <Text style={styles.fareValue}>₱{baseFareForDisplay.toFixed(2)}</Text>
                           </View>
                           <View style={styles.fareRow}>
-                            <Text style={[styles.fareLabel, { color: "#FF9500" }]}>
-                              Companion Surcharge ({companionCount} × 20%)
-                            </Text>
-                            <Text style={[styles.fareValue, { color: "#FF9500" }]}>
-                              +₱{surchargeAmount.toFixed(2)}
-                            </Text>
+                            <Text style={[styles.fareLabel, { color: "#FF9500" }]}>Companion Surcharge ({companionCount} × 20%)</Text>
+                            <Text style={[styles.fareValue, { color: "#FF9500" }]}>+₱{surchargeAmount.toFixed(2)}</Text>
                           </View>
                         </>
                       )}
@@ -1675,9 +1476,7 @@ export default function UserHome() {
                         <Text style={styles.discountNotice}>✨ Discounted fare applied for Senior Citizen/PWD</Text>
                       )}
                       {companionCount > 0 && (
-                        <Text style={styles.companionFareNote}>
-                          👥 +20% per kasama applied ({companionCount} companion{companionCount > 1 ? "s" : ""})
-                        </Text>
+                        <Text style={styles.companionFareNote}>👥 +20% per kasama applied ({companionCount} companion{companionCount > 1 ? "s" : ""})</Text>
                       )}
                     </View>
                   )}
@@ -1709,38 +1508,20 @@ export default function UserHome() {
                 <Text style={styles.reportSectionLabel}>Reason for Report *</Text>
                 <View style={styles.reportReasonsContainer}>
                   {REPORT_REASONS.map((reason, i) => (
-                    <TouchableOpacity
-                      key={i}
-                      style={[styles.reportReasonChip, selectedReportReason === reason && styles.reportReasonChipSelected]}
-                      onPress={() => setSelectedReportReason(reason)}
-                    >
-                      <Text style={[styles.reportReasonText, selectedReportReason === reason && styles.reportReasonTextSelected]}>
-                        {reason}
-                      </Text>
+                    <TouchableOpacity key={i} style={[styles.reportReasonChip, selectedReportReason === reason && styles.reportReasonChipSelected]} onPress={() => setSelectedReportReason(reason)}>
+                      <Text style={[styles.reportReasonText, selectedReportReason === reason && styles.reportReasonTextSelected]}>{reason}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
                 <Text style={styles.reportSectionLabel}>Additional Comments (Optional)</Text>
-                <TextInput
-                  style={styles.reportCommentInput}
-                  placeholder="Please provide more details..."
-                  value={reportComment}
-                  onChangeText={setReportComment}
-                  multiline numberOfLines={4} textAlignVertical="top"
-                />
-                <Text style={styles.reportDisclaimer}>
-                  ℹ️ Your report will be reviewed by our team. All reports are kept confidential.
-                </Text>
+                <TextInput style={styles.reportCommentInput} placeholder="Please provide more details..." value={reportComment} onChangeText={setReportComment} multiline numberOfLines={4} textAlignVertical="top" />
+                <Text style={styles.reportDisclaimer}>ℹ️ Your report will be reviewed by our team. All reports are kept confidential.</Text>
               </ScrollView>
               <View style={styles.reportModalFooter}>
                 <TouchableOpacity style={styles.reportCancelButton} onPress={handleCloseReportModal}>
                   <Text style={styles.reportCancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.reportSubmitButton, (!selectedReportReason || isSubmittingReport) && styles.reportSubmitButtonDisabled]}
-                  onPress={handleSubmitReport}
-                  disabled={!selectedReportReason || isSubmittingReport}
-                >
+                <TouchableOpacity style={[styles.reportSubmitButton, (!selectedReportReason || isSubmittingReport) && styles.reportSubmitButtonDisabled]} onPress={handleSubmitReport} disabled={!selectedReportReason || isSubmittingReport}>
                   <Text style={styles.reportSubmitButtonText}>{isSubmittingReport ? "Submitting..." : "Submit Report"}</Text>
                 </TouchableOpacity>
               </View>
@@ -1770,19 +1551,14 @@ export default function UserHome() {
                       {rides.map((ride) => (
                         <TouchableOpacity key={ride.id} style={styles.historyItem} onPress={() => selectFromHistory(ride)}>
                           <View style={styles.historyItemHeader}>
-                            <Text style={styles.historyTime}>
-                              {new Date(ride.date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
-                            </Text>
+                            <Text style={styles.historyTime}>{new Date(ride.date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</Text>
                             <View style={styles.historyFareContainer}>
                               <Text style={styles.historyFare}>₱{ride.fare.toFixed(2)}</Text>
                               {ride.passengerType === "senior_pwd" && (
                                 <Text style={styles.historyPassengerBadge}>PWD/Senior</Text>
                               )}
-                              {/* ── NEW: show companion count in history ── */}
                               {(ride.companionCount ?? 0) > 0 && (
-                                <Text style={styles.historyCompanionBadge}>
-                                  👥 {1 + (ride.companionCount ?? 0)} pax
-                                </Text>
+                                <Text style={styles.historyCompanionBadge}>👥 {1 + (ride.companionCount ?? 0)} pax</Text>
                               )}
                             </View>
                           </View>
@@ -1816,10 +1592,7 @@ export default function UserHome() {
               </View>
               <Text style={styles.modalTitle}>{modalType === "success" ? "Success!" : "Error"}</Text>
               <Text style={styles.modalMessage}>{modalMessage}</Text>
-              <TouchableOpacity
-                style={[styles.modalButton, modalType === "success" ? styles.successButton : styles.errorButton]}
-                onPress={handleModalClose}
-              >
+              <TouchableOpacity style={[styles.modalButton, modalType === "success" ? styles.successButton : styles.errorButton]} onPress={handleModalClose}>
                 <Text style={styles.modalButtonText}>OK</Text>
               </TouchableOpacity>
             </View>
@@ -1837,313 +1610,232 @@ export default function UserHome() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-
-  // ── Top bar ───────────────────────────────────────────────────
-  userCardContainer: {
-    position: "absolute", top: 60, left: 20, right: 20,
-    flexDirection: "row", alignItems: "center", gap: 10, zIndex: 100,
-  },
-  userCard: {
-    flex: 1, backgroundColor: "#fff", paddingHorizontal: 20, paddingVertical: 12,
-    borderRadius: 25, flexDirection: "row", alignItems: "center",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 8, elevation: 5,
-  },
+  userCardContainer: { position: "absolute", top: 60, left: 20, right: 20, flexDirection: "row", alignItems: "center", gap: 10, zIndex: 100 },
+  userCard: { flex: 1, backgroundColor: "#fff", paddingHorizontal: 20, paddingVertical: 12, borderRadius: 25, flexDirection: "row", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5 },
   emoji: { fontSize: 24, marginRight: 8 },
   userName: { fontSize: 18, fontWeight: "600", color: "#333" },
-
-  profileButton: {
-    backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12,
-    borderRadius: 25,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 8, elevation: 5,
-    borderWidth: 2, borderColor: "#007AFF",
-  },
+  profileButton: { backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12, borderRadius: 25, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5, borderWidth: 2, borderColor: "#007AFF" },
   profileIcon: { fontSize: 20 },
-
-  logoutButton: {
-    backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12,
-    borderRadius: 25,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 8, elevation: 5,
-    borderWidth: 2, borderColor: "#F44336",
-  },
+  logoutButton: { backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12, borderRadius: 25, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5, borderWidth: 2, borderColor: "#F44336" },
   logoutIcon: { fontSize: 20 },
-
-  distanceCard: {
-    position: "absolute", top: 140, left: 20, right: 20,
-    backgroundColor: "#fff", padding: 20, borderRadius: 16,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 8, elevation: 5,
-  },
+  distanceCard: { position: "absolute", top: 140, left: 20, right: 20, backgroundColor: "#fff", padding: 20, borderRadius: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 5 },
   distanceLabel: { fontSize: 14, color: "#666", marginBottom: 4 },
   distanceValue: { fontSize: 32, fontWeight: "bold", color: "#007AFF" },
-
   buttonContainer: { position: "absolute", bottom: 40, left: 20, right: 20, flexDirection: "row", gap: 12 },
-  historyButton: {
-    width: 60, backgroundColor: "#fff", paddingVertical: 18, borderRadius: 16,
-    alignItems: "center", justifyContent: "center",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2, shadowRadius: 8, elevation: 8,
-    borderWidth: 2, borderColor: "#007AFF",
-  },
+  historyButton: { width: 60, backgroundColor: "#fff", paddingVertical: 18, borderRadius: 16, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8, borderWidth: 2, borderColor: "#007AFF" },
   historyButtonText: { fontSize: 24 },
-  bookRideButton: {
-    flex: 1, backgroundColor: "#007AFF", paddingVertical: 18, borderRadius: 16,
-    alignItems: "center",
-    shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 8, elevation: 8,
-  },
+  bookRideButton: { flex: 1, backgroundColor: "#007AFF", paddingVertical: 18, borderRadius: 16, alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8 },
   bookRideButtonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
-
-  confirmCompleteCard: {
-    position: "absolute", bottom: 30, left: 20, right: 20,
-    backgroundColor: "#fff", padding: 20, borderRadius: 20,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25, shadowRadius: 12, elevation: 12,
-    borderWidth: 2.5, borderColor: "#28a745",
-  },
+  confirmCompleteCard: { position: "absolute", bottom: 30, left: 20, right: 20, backgroundColor: "#fff", padding: 20, borderRadius: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 12, borderWidth: 2.5, borderColor: "#28a745" },
   confirmCompleteHeader: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 12 },
   confirmCompleteIcon: { fontSize: 32, marginRight: 10 },
   confirmCompleteTitle: { fontSize: 22, fontWeight: "bold", color: "#28a745" },
   confirmCompleteSubtext: { fontSize: 14, color: "#555", textAlign: "center", marginBottom: 16, lineHeight: 20 },
-  confirmFareRow: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#f0fdf4", padding: 14, borderRadius: 12, marginBottom: 16,
-    borderWidth: 1, borderColor: "#d1fae5",
-  },
+  confirmFareRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f0fdf4", padding: 14, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: "#d1fae5" },
   confirmFareLabel: { fontSize: 15, color: "#555", fontWeight: "600" },
   confirmFareValue: { fontSize: 24, fontWeight: "bold", color: "#28a745" },
-  confirmCompleteButton: {
-    backgroundColor: "#28a745", paddingVertical: 16, borderRadius: 14,
-    alignItems: "center",
-    shadowColor: "#28a745", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35, shadowRadius: 8, elevation: 8, marginBottom: 10,
-  },
+  confirmCompleteButton: { backgroundColor: "#28a745", paddingVertical: 16, borderRadius: 14, alignItems: "center", shadowColor: "#28a745", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 8, marginBottom: 10 },
   confirmCompleteButtonText: { color: "#fff", fontSize: 17, fontWeight: "700" },
   confirmCompleteNote: { fontSize: 12, color: "#999", textAlign: "center", fontStyle: "italic" },
-
-  driverCard: {
-    position: "absolute", bottom: 40, left: 20, right: 20,
-    backgroundColor: "#fff", padding: 20, borderRadius: 16,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2, shadowRadius: 8, elevation: 8,
-    borderWidth: 2, borderColor: "#28a745",
-  },
+  driverCard: { position: "absolute", bottom: 40, left: 20, right: 20, backgroundColor: "#fff", padding: 20, borderRadius: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8, borderWidth: 2, borderColor: "#28a745" },
   driverCardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16 },
   driverCardIcon: { fontSize: 24, marginRight: 8 },
   driverCardTitle: { fontSize: 18, fontWeight: "bold", color: "#28a745" },
-
-  waitingCard: {
-    position: "absolute", bottom: 40, left: 20, right: 20,
-    backgroundColor: "#fff", padding: 20, borderRadius: 16,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2, shadowRadius: 8, elevation: 8,
-    borderWidth: 2, borderColor: "#FFA500",
-  },
+  waitingCard: { position: "absolute", bottom: 40, left: 20, right: 20, backgroundColor: "#fff", padding: 20, borderRadius: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8, borderWidth: 2, borderColor: "#FFA500" },
   waitingHeader: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 12 },
   waitingIcon: { fontSize: 24, marginRight: 8 },
   waitingTitle: { fontSize: 18, fontWeight: "bold", color: "#333" },
-  driverInfoContainer: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 12,
-    borderWidth: 1, borderColor: "#e0e0e0",
-  },
+  driverInfoContainer: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e0e0e0" },
   driverInfo: { flex: 1 },
   driverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
   driverDetails: { fontSize: 14, color: "#666", marginTop: 2 },
-  driverActionButtons: { flexDirection: "row", gap: 10, marginLeft: 12 },
-  messageButton: {
-    backgroundColor: "#007AFF", width: 56, height: 56, borderRadius: 28,
-    justifyContent: "center", alignItems: "center",
-    shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3, shadowRadius: 4, elevation: 4,
-  },
-  callButton: {
-    backgroundColor: "#28a745", width: 56, height: 56, borderRadius: 28,
-    justifyContent: "center", alignItems: "center",
-    shadowColor: "#28a745", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3, shadowRadius: 4, elevation: 4,
-  },
-  actionIcon: { fontSize: 28 },
-  driverSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
-  waitingSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
-  actionButtonsRow: { flexDirection: "row", gap: 10 },
-  reportButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  reportButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  cancelButton: { flex: 1, backgroundColor: "#F44336", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  cancelButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  cancelButtonDisabled: {
-    flex: 1, backgroundColor: "#e0e0e0", paddingVertical: 14, borderRadius: 12,
-    alignItems: "center", borderWidth: 1, borderColor: "#ccc",
-  },
-  cancelButtonDisabledText: { color: "#999", fontSize: 14, fontWeight: "600" },
-  cancelLockedNote: { fontSize: 11, color: "#999", textAlign: "center", marginTop: 8, fontStyle: "italic" },
-
-  recommendedSection: { marginBottom: 20, backgroundColor: "#F0F7FF", borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: "#B3D4FF" },
-  recommendedHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  recommendedTitle: { fontSize: 15, fontWeight: "700", color: "#1A1A2E" },
-  liveBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#34C759", gap: 4 },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#34C759" },
-  liveBadgeText: { fontSize: 10, fontWeight: "700", color: "#34C759", letterSpacing: 0.5 },
-  recommendedSubtitle: { fontSize: 12, color: "#666", marginBottom: 14 },
-  recommendedChipRow: { gap: 10 },
-  recommendedChip: {
-    flexDirection: "row", alignItems: "center", backgroundColor: "#fff",
-    borderRadius: 14, borderWidth: 2, paddingVertical: 12, paddingHorizontal: 12,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2, gap: 10,
-  },
-  rankBadge: { width: 34, height: 34, borderRadius: 17, justifyContent: "center", alignItems: "center" },
-  rankEmoji: { fontSize: 16 },
-  recommendedChipBody: { flex: 1 },
-  recommendedChipToda: { fontSize: 14, fontWeight: "700", color: "#1A1A2E", marginBottom: 1 },
-  recommendedChipDesc: { fontSize: 12, color: "#888", marginBottom: 4 },
-  distancePill: { alignSelf: "flex-start", backgroundColor: "#F5F5F5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  distancePillText: { fontSize: 11, fontWeight: "600" },
-  selectedCheck: { width: 24, height: 24, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-  selectedCheckText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  selectedTodaBadge: { marginLeft: 8, backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: "#34C759" },
-  selectedTodaBadgeText: { fontSize: 11, color: "#34C759", fontWeight: "600" },
-
-  // ── NEW: Companion counter styles ─────────────────────────────
-  companionRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: "#f8f9fa", borderRadius: 16, borderWidth: 1, borderColor: "#e0e0e0",
-    padding: 8, marginBottom: 8,
-  },
-  companionBtn: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center",
-    shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25, shadowRadius: 4, elevation: 3,
-  },
-  companionBtnDisabled: { backgroundColor: "#c8c8c8", shadowOpacity: 0 },
-  companionBtnText: { fontSize: 26, color: "#fff", fontWeight: "700", lineHeight: 30 },
-  companionCountBox: { alignItems: "center", flex: 1 },
-  companionCountNum: { fontSize: 36, fontWeight: "800", color: "#007AFF", lineHeight: 42 },
-  companionCountLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
-  companionNote: {
-    backgroundColor: "#FFF8EC", borderRadius: 10, padding: 10,
-    borderWidth: 1, borderColor: "#FFD580", marginBottom: 10,
-  },
-  companionNoteText: { fontSize: 13, color: "#B8720A", fontWeight: "600", textAlign: "center" },
-  seatRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
-  seatDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
-  seatDotFilled: { backgroundColor: "#007AFF", borderColor: "#007AFF" },
-  seatDotEmpty: { backgroundColor: "#fff", borderColor: "#c0c0c0" },
-  seatLabel: { fontSize: 12, color: "#888", marginLeft: 4 },
-  // ── END companion styles ──────────────────────────────────────
-
-  reportModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", width: "100%" },
-  reportModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
-  reportModalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
-  reportModalBody: { padding: 20, maxHeight: "70%" },
-  reportDriverInfo: { backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: "#e0e0e0" },
-  reportDriverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
-  reportDriverDetails: { fontSize: 14, color: "#666" },
-  reportSectionLabel: { fontSize: 16, fontWeight: "600", color: "#333", marginBottom: 12, marginTop: 8 },
-  reportReasonsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
-  reportReasonChip: { backgroundColor: "#f0f0f0", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 2, borderColor: "#e0e0e0" },
-  reportReasonChipSelected: { backgroundColor: "#FFA500", borderColor: "#FFA500" },
-  reportReasonText: { fontSize: 14, color: "#666", fontWeight: "500" },
-  reportReasonTextSelected: { color: "#fff", fontWeight: "600" },
-  reportCommentInput: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, padding: 16, fontSize: 16, minHeight: 100, backgroundColor: "#fff", marginBottom: 16 },
-  reportDisclaimer: { fontSize: 13, color: "#999", fontStyle: "italic", textAlign: "center", paddingHorizontal: 10 },
-  reportModalFooter: { flexDirection: "row", gap: 10, padding: 20, borderTopWidth: 1, borderTopColor: "#e0e0e0" },
-  reportCancelButton: { flex: 1, backgroundColor: "#f0f0f0", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
-  reportCancelButtonText: { fontSize: 16, fontWeight: "600", color: "#666" },
-  reportSubmitButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
-  reportSubmitButtonDisabled: { backgroundColor: "#ccc" },
-  reportSubmitButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
-  overlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 1000 },
-  backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)" },
-  keyboardAvoid: { width: "100%" },
-  formContainer: {
-    backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    paddingHorizontal: 20, paddingBottom: 30, paddingTop: 10, maxHeight: "90%",
-    shadowColor: "#000", shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1, shadowRadius: 12, elevation: 20,
-  },
-  scrollContent: { flexGrow: 1 },
-  handleBar: { width: 40, height: 5, backgroundColor: "#ddd", borderRadius: 3, alignSelf: "center", marginTop: 12, marginBottom: 20 },
-  title: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 12 },
-  instructionText: { fontSize: 14, color: "#007AFF", backgroundColor: "#e7f3ff", padding: 12, borderRadius: 8, marginBottom: 20, textAlign: "center" },
-  inputContainer: { marginBottom: 20 },
-  iconRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  icon: { fontSize: 16, marginRight: 8 },
-  label: { fontSize: 14, fontWeight: "600", color: "#666" },
-  passengerTypeContainer: { flexDirection: "row", gap: 10 },
-  passengerTypeButton: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, borderWidth: 2, borderColor: "#e0e0e0", backgroundColor: "#fff", alignItems: "center" },
-  passengerTypeButtonActive: { borderColor: "#007AFF", backgroundColor: "#e7f3ff" },
-  passengerTypeText: { fontSize: 14, fontWeight: "600", color: "#666", textAlign: "center" },
-  passengerTypeTextActive: { color: "#007AFF" },
-  pickerContainer: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, backgroundColor: "#fff", overflow: "hidden" },
-  picker: { height: 50 },
-  input: { height: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: "#fff" },
-  readOnlyInput: { minHeight: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#f9f9f9", justifyContent: "center" },
-  readOnlyText: { fontSize: 16, color: "#333" },
-  searchResults: { marginTop: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, maxHeight: 200, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
-  searchScroll: { maxHeight: 200 },
-  searchItem: { flexDirection: "row", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
-  searchIcon: { fontSize: 18, marginRight: 12 },
-  searchItemContent: { flex: 1 },
-  searchItemText: { fontSize: 16, color: "#333", fontWeight: "600" },
-  searchItemSubtext: { fontSize: 12, color: "#999", marginTop: 2 },
-  popularContainer: { marginBottom: 20 },
-  popularTitle: { fontSize: 14, fontWeight: "600", color: "#666", marginBottom: 12 },
-  chipContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { backgroundColor: "#e7f3ff", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: "#007AFF" },
-  chipText: { color: "#007AFF", fontSize: 13, fontWeight: "500" },
-  fareContainer: { backgroundColor: "#f0f8ff", borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: "#007AFF" },
-  fareRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-  fareLabel: { fontSize: 14, color: "#666" },
-  fareValue: { fontSize: 14, fontWeight: "600", color: "#333" },
-  divider: { height: 1, backgroundColor: "#007AFF", marginVertical: 8, opacity: 0.3 },
-  totalLabel: { fontSize: 16, fontWeight: "bold", color: "#333" },
-  totalValue: { fontSize: 20, fontWeight: "bold", color: "#007AFF" },
-  discountNotice: { fontSize: 12, color: "#28a745", textAlign: "center", marginTop: 8, fontWeight: "600" },
-  companionFareNote: { fontSize: 12, color: "#FF9500", textAlign: "center", marginTop: 4, fontWeight: "600" }, // ── NEW
-  historyModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 20 },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
-  modalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
-  closeButton: { fontSize: 28, color: "#999" },
-  historyList: { padding: 20 },
-  emptyHistoryState: { alignItems: "center", paddingVertical: 60 },
-  emptyHistoryEmoji: { fontSize: 64, marginBottom: 16 },
-  emptyHistoryText: { fontSize: 18, fontWeight: "600", color: "#666", marginBottom: 8 },
-  emptyHistorySubtext: { fontSize: 14, color: "#999" },
-  historyDateGroup: { marginBottom: 24 },
-  historyDateHeader: { fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 12, paddingLeft: 4 },
-  historyItem: { backgroundColor: "#f8f9fa", borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: "#e0e0e0" },
-  historyItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  historyTime: { fontSize: 14, color: "#666", fontWeight: "500" },
-  historyFareContainer: { alignItems: "flex-end" },
-  historyFare: { fontSize: 18, fontWeight: "bold", color: "#28a745" },
-  historyPassengerBadge: { fontSize: 10, color: "#007AFF", backgroundColor: "#e7f3ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
-  historyCompanionBadge: { fontSize: 10, color: "#FF9500", backgroundColor: "#FFF3E0", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" }, // ── NEW
-  historyLocations: { marginBottom: 8 },
-  historyLocationRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
-  historyLocationIcon: { fontSize: 14, marginRight: 8 },
-  historyLocationText: { flex: 1, fontSize: 14, color: "#333" },
-  historyDistance: { fontSize: 12, color: "#999", marginTop: 4 },
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end", alignItems: "center" },
-  modalContent: { backgroundColor: "#fff", borderRadius: 16, padding: 24, width: "80%", alignItems: "center", marginBottom: "50%" },
-  modalIconContainer: { width: 60, height: 60, borderRadius: 30, justifyContent: "center", alignItems: "center", marginBottom: 16 },
-  successIcon: { backgroundColor: "#4CAF50" },
-  errorIcon: { backgroundColor: "#F44336" },
-  modalIcon: { fontSize: 32, color: "#fff", fontWeight: "bold" },
-  modalMessage: { fontSize: 16, textAlign: "center", color: "#666", marginBottom: 24 },
-  modalButton: { width: "100%", height: 50, borderRadius: 8, justifyContent: "center", alignItems: "center" },
-  successButton: { backgroundColor: "#4CAF50" },
-  errorButton: { backgroundColor: "#F44336" },
-  modalButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  bookaride: { width: "100%", height: "100%" },
-    bookButton: {
-    height: 56, backgroundColor: "#007AFF", borderRadius: 12,
-    justifyContent: "center", alignItems: "center",
-    shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 8, elevation: 8, marginTop: 10,
-  },
-  bookButtonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+driverActionButtons: { flexDirection: "row", gap: 10, marginLeft: 12 },
+messageButton: { backgroundColor: "#007AFF", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+callButton: { backgroundColor: "#28a745", width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center", shadowColor: "#28a745", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+actionIcon: { fontSize: 28 },
+driverSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
+waitingSubtext: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 16 },
+actionButtonsRow: { flexDirection: "row", gap: 10 },
+reportButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+reportButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+cancelButton: { flex: 1, backgroundColor: "#F44336", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+cancelButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+cancelButtonDisabled: { flex: 1, backgroundColor: "#e0e0e0", paddingVertical: 14, borderRadius: 12, alignItems: "center", borderWidth: 1, borderColor: "#ccc" },
+cancelButtonDisabledText: { color: "#999", fontSize: 14, fontWeight: "600" },
+cancelLockedNote: { fontSize: 11, color: "#999", textAlign: "center", marginTop: 8, fontStyle: "italic" },
+recommendedSection: { marginBottom: 20, backgroundColor: "#F0F7FF", borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: "#B3D4FF" },
+recommendedHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+recommendedTitle: { fontSize: 15, fontWeight: "700", color: "#1A1A2E" },
+liveBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "#34C759", gap: 4 },
+liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#34C759" },
+liveBadgeText: { fontSize: 10, fontWeight: "700", color: "#34C759", letterSpacing: 0.5 },
+recommendedSubtitle: { fontSize: 12, color: "#666", marginBottom: 14 },
+recommendedChipRow: { gap: 10 },
+recommendedChip: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 14, borderWidth: 2, paddingVertical: 12, paddingHorizontal: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2, gap: 10 },
+rankBadge: { width: 34, height: 34, borderRadius: 17, justifyContent: "center", alignItems: "center" },
+rankEmoji: { fontSize: 16 },
+recommendedChipBody: { flex: 1 },
+recommendedChipToda: { fontSize: 14, fontWeight: "700", color: "#1A1A2E", marginBottom: 1 },
+recommendedChipDesc: { fontSize: 12, color: "#888", marginBottom: 4 },
+distancePill: { alignSelf: "flex-start", backgroundColor: "#F5F5F5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+distancePillText: { fontSize: 11, fontWeight: "600" },
+selectedCheck: { width: 24, height: 24, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+selectedCheckText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+selectedTodaBadge: { marginLeft: 8, backgroundColor: "#E8FFF0", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: "#34C759" },
+selectedTodaBadgeText: { fontSize: 11, color: "#34C759", fontWeight: "600" },
+companionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f8f9fa", borderRadius: 16, borderWidth: 1, borderColor: "#e0e0e0", padding: 8, marginBottom: 8 },
+companionBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#007AFF", justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 3 },
+companionBtnDisabled: { backgroundColor: "#c8c8c8", shadowOpacity: 0 },
+companionBtnText: { fontSize: 26, color: "#fff", fontWeight: "700", lineHeight: 30 },
+companionCountBox: { alignItems: "center", flex: 1 },
+companionCountNum: { fontSize: 36, fontWeight: "800", color: "#007AFF", lineHeight: 42 },
+companionCountLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
+companionNote: { backgroundColor: "#FFF8EC", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#FFD580", marginBottom: 10 },
+companionNoteText: { fontSize: 13, color: "#B8720A", fontWeight: "600", textAlign: "center" },
+seatRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+seatDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
+seatDotFilled: { backgroundColor: "#007AFF", borderColor: "#007AFF" },
+seatDotEmpty: { backgroundColor: "#fff", borderColor: "#c0c0c0" },
+seatLabel: { fontSize: 12, color: "#888", marginLeft: 4 },
+reportModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", width: "100%" },
+reportModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
+reportModalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
+reportModalBody: { padding: 20, maxHeight: "70%" },
+reportDriverInfo: { backgroundColor: "#f8f9fa", padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: "#e0e0e0" },
+reportDriverName: { fontSize: 18, fontWeight: "bold", color: "#333", marginBottom: 4 },
+reportDriverDetails: { fontSize: 14, color: "#666" },
+reportSectionLabel: { fontSize: 16, fontWeight: "600", color: "#333", marginBottom: 12, marginTop: 8 },
+reportReasonsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
+reportReasonChip: { backgroundColor: "#f0f0f0", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 2, borderColor: "#e0e0e0" },
+reportReasonChipSelected: { backgroundColor: "#FFA500", borderColor: "#FFA500" },
+reportReasonText: { fontSize: 14, color: "#666", fontWeight: "500" },
+reportReasonTextSelected: { color: "#fff", fontWeight: "600" },
+reportCommentInput: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, padding: 16, fontSize: 16, minHeight: 100, backgroundColor: "#fff", marginBottom: 16 },
+reportDisclaimer: { fontSize: 13, color: "#999", fontStyle: "italic", textAlign: "center", paddingHorizontal: 10 },
+reportModalFooter: { flexDirection: "row", gap: 10, padding: 20, borderTopWidth: 1, borderTopColor: "#e0e0e0" },
+reportCancelButton: { flex: 1, backgroundColor: "#f0f0f0", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
+reportCancelButtonText: { fontSize: 16, fontWeight: "600", color: "#666" },
+reportSubmitButton: { flex: 1, backgroundColor: "#FFA500", paddingVertical: 16, borderRadius: 12, alignItems: "center" },
+reportSubmitButtonDisabled: { backgroundColor: "#ccc" },
+reportSubmitButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
+overlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 1000 },
+backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)" },
+keyboardAvoid: { width: "100%" },
+formContainer: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 30, paddingTop: 10, maxHeight: "90%", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
+scrollContent: { flexGrow: 1 },
+handleBar: { width: 40, height: 5, backgroundColor: "#ddd", borderRadius: 3, alignSelf: "center", marginTop: 12, marginBottom: 20 },
+title: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 12 },
+instructionText: { fontSize: 14, color: "#007AFF", backgroundColor: "#e7f3ff", padding: 12, borderRadius: 8, marginBottom: 20, textAlign: "center" },
+inputContainer: { marginBottom: 20 },
+iconRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+icon: { fontSize: 16, marginRight: 8 },
+label: { fontSize: 14, fontWeight: "600", color: "#666" },
+passengerTypeContainer: { flexDirection: "row", gap: 10 },
+passengerTypeButton: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, borderWidth: 2, borderColor: "#e0e0e0", backgroundColor: "#fff", alignItems: "center" },
+passengerTypeButtonActive: { borderColor: "#007AFF", backgroundColor: "#e7f3ff" },
+passengerTypeText: { fontSize: 14, fontWeight: "600", color: "#666", textAlign: "center" },
+passengerTypeTextActive: { color: "#007AFF" },
+pickerContainer: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, backgroundColor: "#fff", overflow: "hidden" },
+picker: { height: 50 },
+input: { height: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, fontSize: 16, backgroundColor: "#fff" },
+readOnlyInput: { minHeight: 50, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#f9f9f9", justifyContent: "center" },
+readOnlyText: { fontSize: 16, color: "#333" },
+selectedLocationBox: {
+backgroundColor: '#f0f8ff',
+borderWidth: 2,
+borderColor: '#007AFF',
+borderRadius: 12,
+padding: 16,
+flexDirection: 'row',
+justifyContent: 'space-between',
+alignItems: 'center',
+},
+selectedLocationText: {
+flex: 1,
+fontSize: 16,
+color: '#333',
+fontWeight: '500',
+marginRight: 12,
+},
+changeLocationButton: {
+backgroundColor: '#007AFF',
+paddingHorizontal: 16,
+paddingVertical: 8,
+borderRadius: 8,
+},
+changeLocationButtonText: {
+color: '#fff',
+fontSize: 14,
+fontWeight: '600',
+},
+clearLocationButton: {
+marginLeft: 'auto',
+backgroundColor: '#f44336',
+paddingHorizontal: 10,
+paddingVertical: 4,
+borderRadius: 12,
+},
+clearLocationText: {
+color: '#fff',
+fontSize: 12,
+fontWeight: '600',
+},
+searchResults: { marginTop: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, maxHeight: 200, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
+searchScroll: { maxHeight: 200 },
+searchItem: { flexDirection: "row", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
+searchIcon: { fontSize: 18, marginRight: 12 },
+searchItemContent: { flex: 1 },
+searchItemText: { fontSize: 16, color: "#333", fontWeight: "600" },
+searchItemSubtext: { fontSize: 12, color: "#999", marginTop: 2 },
+popularContainer: { marginBottom: 20 },
+popularTitle: { fontSize: 14, fontWeight: "600", color: "#666", marginBottom: 12 },
+chipContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+chip: { backgroundColor: "#e7f3ff", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: "#007AFF" },
+chipText: { color: "#007AFF", fontSize: 13, fontWeight: "500" },
+fareContainer: { backgroundColor: "#f0f8ff", borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: "#007AFF" },
+fareRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+fareLabel: { fontSize: 14, color: "#666" },
+fareValue: { fontSize: 14, fontWeight: "600", color: "#333" },
+divider: { height: 1, backgroundColor: "#007AFF", marginVertical: 8, opacity: 0.3 },
+totalLabel: { fontSize: 16, fontWeight: "bold", color: "#333" },
+totalValue: { fontSize: 20, fontWeight: "bold", color: "#007AFF" },
+discountNotice: { fontSize: 12, color: "#28a745", textAlign: "center", marginTop: 8, fontWeight: "600" },
+companionFareNote: { fontSize: 12, color: "#FF9500", textAlign: "center", marginTop: 4, fontWeight: "600" },
+historyModalContent: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", paddingBottom: 20 },
+modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#e0e0e0" },
+modalTitle: { fontSize: 24, fontWeight: "bold", color: "#333" },
+closeButton: { fontSize: 28, color: "#999" },
+historyList: { padding: 20 },
+emptyHistoryState: { alignItems: "center", paddingVertical: 60 },
+emptyHistoryEmoji: { fontSize: 64, marginBottom: 16 },
+emptyHistoryText: { fontSize: 18, fontWeight: "600", color: "#666", marginBottom: 8 },
+emptyHistorySubtext: { fontSize: 14, color: "#999" },
+historyDateGroup: { marginBottom: 24 },
+historyDateHeader: { fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 12, paddingLeft: 4 },
+historyItem: { backgroundColor: "#f8f9fa", borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: "#e0e0e0" },
+historyItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+historyTime: { fontSize: 14, color: "#666", fontWeight: "500" },
+historyFareContainer: { alignItems: "flex-end" },
+historyFare: { fontSize: 18, fontWeight: "bold", color: "#28a745" },
+historyPassengerBadge: { fontSize: 10, color: "#007AFF", backgroundColor: "#e7f3ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
+historyCompanionBadge: { fontSize: 10, color: "#FF9500", backgroundColor: "#FFF3E0", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginTop: 2, fontWeight: "600" },
+historyLocations: { marginBottom: 8 },
+historyLocationRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+historyLocationIcon: { fontSize: 14, marginRight: 8 },
+historyLocationText: { flex: 1, fontSize: 14, color: "#333" },
+historyDistance: { fontSize: 12, color: "#999", marginTop: 4 },
+modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end", alignItems: "center" },
+modalContent: { backgroundColor: "#fff", borderRadius: 16, padding: 24, width: "80%", alignItems: "center", marginBottom: "50%" },
+modalIconContainer: { width: 60, height: 60, borderRadius: 30, justifyContent: "center", alignItems: "center", marginBottom: 16 },
+successIcon: { backgroundColor: "#4CAF50" },
+errorIcon: { backgroundColor: "#F44336" },
+modalIcon: { fontSize: 32, color: "#fff", fontWeight: "bold" },
+modalMessage: { fontSize: 16, textAlign: "center", color: "#666", marginBottom: 24 },
+modalButton: { width: "100%", height: 50, borderRadius: 8, justifyContent: "center", alignItems: "center" },
+successButton: { backgroundColor: "#4CAF50" },
+errorButton: { backgroundColor: "#F44336" },
+modalButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+bookaride: { width: "100%", height: "100%" },
+bookButton: { height: 56, backgroundColor: "#007AFF", borderRadius: 12, justifyContent: "center", alignItems: "center", shadowColor: "#007AFF", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8, marginTop: 10 },
+bookButtonText: { color: "#fff", fontSize: 18, fontWeight: "700" },
 });

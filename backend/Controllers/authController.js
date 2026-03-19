@@ -1,62 +1,53 @@
 import User from '../models/user.js';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
 import Tesseract from 'tesseract.js';
 import fs from 'fs';
 import path from 'path';
-
+import { Resend } from 'resend';
 const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// Configure nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail', // let nodemailer handle host/port automatically
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // must be an App Password, not your Gmail password
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-  // Store verification codes temporarily (use Redis in production)
-  const verificationCodes = new Map();
+// Store verification codes temporarily (use Redis in production)
+const verificationCodes = new Map();
 
-  export const sendVerification = async (req, res) => {
-    try {
-      const { email } = req.body;
+export const sendVerification = async (req, res) => {
+  try {
+    const { email } = req.body;
 
-      // Generate 6-digit code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      
-      // Store code with 10 minute expiration
-      verificationCodes.set(email, {
-        code,
-        expiresAt: Date.now() + 10 * 60 * 1000
-      });
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Send email using Nodemailer
-      await transporter.sendMail({
-        from: `"Trike Connect" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: 'Verify Your Email',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2>Email Verification</h2>
-            <p>Your Trike Connect verification code is:</p>
-            <div style="background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px;">
-              ${code}
-            </div>
-            <p>This code will expire in 10 minutes.</p>
+    // Store code with 10 minute expiration
+    verificationCodes.set(email, {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    // Send email using Resend
+    await resend.emails.send({
+      from: 'Trike Connect <noreply@hrms.fun>', // use this until you verify a domain
+      to: email,
+      subject: 'Verify Your Email',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Email Verification</h2>
+          <p>Your Trike Connect verification code is:</p>
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px;">
+            ${code}
           </div>
-        `
-      });
+          <p>This code will expire in 10 minutes.</p>
+        </div>
+      `
+    });
 
-      res.json({ success: true, message: 'Verification code sent' });
-    } catch (error) {
-      console.error('Send verification error:', error);
-      res.status(500).json({ message: 'Failed to send verification code' });
-    }
-  };
-
+    res.json({ success: true, message: 'Verification code sent' });
+  } catch (error) {
+    console.error('Send verification error:', error);
+    res.status(500).json({ message: 'Failed to send verification code' });
+  }
+};
   // Verify code
   export const verificationCode = async (req, res) => {
     try {
